@@ -19,11 +19,34 @@ pub struct Latency {
     pub p95_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RunContext {
+    pub scenario_sha256: String,
+    pub pack_id: Option<String>,
+    pub pack_version: Option<String>,
+    pub approval: String,
+}
+
+impl RunContext {
+    pub fn direct(scenario_sha256: impl Into<String>) -> Self {
+        Self {
+            scenario_sha256: scenario_sha256.into(),
+            pack_id: None,
+            pack_version: None,
+            approval: "none".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub format_version: String,
     pub scenario_id: String,
     pub scenario_version: String,
+    pub scenario_sha256: String,
+    pub pack_id: Option<String>,
+    pub pack_version: Option<String>,
+    pub approval: String,
     pub session_id: String,
     pub mode: String,
     pub started_at: String,
@@ -40,6 +63,7 @@ pub fn build(
     session: &Session,
     evaluation: Evaluation,
     log_jsonl: &str,
+    context: &RunContext,
 ) -> Report {
     let latencies = session
         .latencies()
@@ -50,6 +74,10 @@ pub fn build(
         format_version: FORMAT_VERSION.to_string(),
         scenario_id: scenario.id.clone(),
         scenario_version: scenario.version.clone(),
+        scenario_sha256: context.scenario_sha256.clone(),
+        pack_id: context.pack_id.clone(),
+        pack_version: context.pack_version.clone(),
+        approval: context.approval.clone(),
         session_id: session_id(log_jsonl),
         mode: session.mode.clone(),
         started_at: session.started_at.clone(),

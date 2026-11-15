@@ -13,8 +13,8 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use callcraft_core::pack::{
-    FORMAT_ID, PackManifest, PackOwner, PackRequires, PackSources, PackVisibility, ProtocolRef,
-    safe_id, validate_scenario_text,
+    ApprovalLedger, ApprovalStatus, FORMAT_ID, PackManifest, PackOwner, PackRequires, PackSources,
+    PackVisibility, ProtocolRef, safe_id, sha256_hex, validate_scenario_text,
 };
 use callcraft_core::scenario::{Difficulty, IncidentType};
 use callcraft_core::validate::{Validated, validate_yaml};
@@ -73,6 +73,15 @@ pub struct SaveResult {
     pub pack_id: String,
     pub scenario: ScenarioEntry,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenedScenario {
+    pub yaml: String,
+    pub validated: Validated,
+    pub scenario_sha256: String,
+    pub pack_version: String,
+    pub approval: String,
 }
 
 impl PackStore {
@@ -175,9 +184,23 @@ impl PackStore {
         fs::create_dir_all(&scenarios_dir)
             .map_err(|error| format!("create scenarios directory: {error}"))?;
         let path = scenarios_dir.join(format!("{scenario_id}.scenario.yaml"));
+        let approvals_path = pack_dir.join("approvals.yaml");
+        let mut ledger = read_ledger(&approvals_path)?;
+        let existing_hash = fs::read(&path).ok().map(|bytes| sha256_hex(&bytes));
         write_private(&path, yaml)?;
+        let new_hash = sha256_hex(yaml.as_bytes());
+        if existing_hash.as_deref() != Some(new_hash.as_str()) {
+            let had_approval = ledger
+                .entries
+                .iter()
+                .any(|entry| entry.scenario_id == scenario_id);
+            ledger.remove(&scenario_id);
+            if had_approval {
+                write_ledger(&approvals_path, &ledger)?;
+            }
+        }
 
-        let entry = self.scenario_entry(&path, &scenario_id, yaml);
+        let entry = self.scenario_entry(&path, &scenario_id, yaml, &ledger);
         Ok(SaveResult {
             pack_id: pack_id.to_string(),
             scenario: entry,
@@ -186,17 +209,77 @@ impl PackStore {
     }
 
     pub fn open(&self, pack_id: &str, scenario_id: &str) -> Result<(String, Validated), String> {
+        let opened = self.open_with_metadata(pack_id, scenario_id)?;
+        Ok((opened.yaml, opened.validated))
+    }
+
+    pub fn open_with_metadata(
+        &self,
+        pack_id: &str,
+        scenario_id: &str,
+    ) -> Result<OpenedScenario, String> {
         if !safe_id(pack_id) || !safe_id(scenario_id) {
             return Err("invalid pack or scenario id".to_string());
         }
-        let path = self
-            .root
-            .join(pack_id)
+        let pack_dir = self.root.join(pack_id);
+        let manifest_text = fs::read_to_string(pack_dir.join("callcraft-pack.yaml"))
+            .map_err(|error| format!("read pack manifest: {error}"))?;
+        let manifest = PackManifest::parse_yaml(&manifest_text)?;
+        manifest.validate()?;
+        if manifest.id != pack_id {
+            return Err(format!(
+                "pack manifest id '{}' does not match directory '{pack_id}'",
+                manifest.id
+            ));
+        }
+        let path = pack_dir
             .join("scenarios")
             .join(format!("{scenario_id}.scenario.yaml"));
-        let text = fs::read_to_string(&path).map_err(|error| format!("read scenario: {error}"))?;
-        let validated = validate_scenario_text(&text, scenario_id, false)?;
-        Ok((text, validated))
+        let yaml = fs::read_to_string(&path).map_err(|error| format!("read scenario: {error}"))?;
+        let validated = validate_scenario_text(&yaml, scenario_id, false)?;
+        let scenario_sha256 = sha256_hex(yaml.as_bytes());
+        let ledger = read_ledger(&pack_dir.join("approvals.yaml"))?;
+        let approval = ledger
+            .status_for(scenario_id, &scenario_sha256)
+            .as_str()
+            .to_string();
+        Ok(OpenedScenario {
+            yaml,
+            validated,
+            scenario_sha256,
+            pack_version: manifest.version,
+            approval,
+        })
+    }
+
+    pub fn set_approval(
+        &self,
+        pack_id: &str,
+        scenario_id: &str,
+        status: ApprovalStatus,
+        by: &str,
+        note: Option<String>,
+    ) -> Result<ScenarioEntry, String> {
+        if !safe_id(pack_id) || !safe_id(scenario_id) {
+            return Err("invalid pack or scenario id".to_string());
+        }
+        let opened = self.open_with_metadata(pack_id, scenario_id)?;
+        let pack_dir = self.root.join(pack_id);
+        let approvals_path = pack_dir.join("approvals.yaml");
+        let mut ledger = read_ledger(&approvals_path)?;
+        ledger.set(
+            scenario_id,
+            &opened.scenario_sha256,
+            status,
+            by,
+            &crate::util::now_iso(),
+            note,
+        );
+        write_ledger(&approvals_path, &ledger)?;
+        let path = pack_dir
+            .join("scenarios")
+            .join(format!("{scenario_id}.scenario.yaml"));
+        Ok(self.scenario_entry(&path, scenario_id, &opened.yaml, &ledger))
     }
 
     fn installed_pack_ids(&self) -> Vec<String> {
@@ -261,6 +344,21 @@ impl PackStore {
                 error: Some(error),
             };
         }
+        let ledger = match read_ledger(&path.join("approvals.yaml")) {
+            Ok(ledger) => ledger,
+            Err(error) => {
+                return PackView {
+                    id: manifest.id,
+                    name: manifest.name,
+                    version: manifest.version,
+                    visibility: visibility_label(manifest.visibility).to_string(),
+                    license: manifest.license,
+                    owner: manifest.owner.agency,
+                    scenarios: Vec::new(),
+                    error: Some(error),
+                };
+            }
+        };
 
         let mut scenarios = Vec::new();
         if let Ok(entries) = fs::read_dir(path.join("scenarios")) {
@@ -276,7 +374,7 @@ impl PackStore {
                     continue;
                 }
                 match fs::read_to_string(&path) {
-                    Ok(text) => scenarios.push(self.scenario_entry(&path, id, &text)),
+                    Ok(text) => scenarios.push(self.scenario_entry(&path, id, &text, &ledger)),
                     Err(error) => scenarios.push(ScenarioEntry {
                         id: id.to_string(),
                         title: String::new(),
@@ -312,7 +410,13 @@ impl PackStore {
         }
     }
 
-    fn scenario_entry(&self, path: &Path, expected_id: &str, text: &str) -> ScenarioEntry {
+    fn scenario_entry(
+        &self,
+        path: &Path,
+        expected_id: &str,
+        text: &str,
+        ledger: &ApprovalLedger,
+    ) -> ScenarioEntry {
         let modified = modified(path);
         let file = path
             .strip_prefix(self.root.join(expected_id).join("scenarios"))
@@ -322,6 +426,10 @@ impl PackStore {
             .unwrap_or_else(|| format!("scenarios/{expected_id}.scenario.yaml"));
         match validate_scenario_text(text, expected_id, false) {
             Ok(validated) => {
+                let status = ledger
+                    .status_for(expected_id, &sha256_hex(text.as_bytes()))
+                    .as_str()
+                    .to_string();
                 let scenario = validated.scenario;
                 ScenarioEntry {
                     id: scenario.id,
@@ -342,7 +450,7 @@ impl PackStore {
                     modified,
                     file,
                     valid: true,
-                    status: "draft".to_string(),
+                    status,
                     warnings: validated.warnings,
                     error: None,
                 }
@@ -423,6 +531,20 @@ pub fn validate_pack_dir(path: &Path) -> Result<PackView, String> {
         return Err(errors.join("\n"));
     }
     Ok(view)
+}
+
+fn read_ledger(path: &Path) -> Result<ApprovalLedger, String> {
+    if !path.is_file() {
+        return Ok(ApprovalLedger::default());
+    }
+    let text = fs::read_to_string(path).map_err(|error| format!("read approvals: {error}"))?;
+    let ledger = ApprovalLedger::parse_yaml(&text)?;
+    ledger.validate()?;
+    Ok(ledger)
+}
+
+fn write_ledger(path: &Path, ledger: &ApprovalLedger) -> Result<(), String> {
+    write_private(path, &ledger.render_yaml()?)
 }
 
 fn visibility_label(visibility: PackVisibility) -> &'static str {

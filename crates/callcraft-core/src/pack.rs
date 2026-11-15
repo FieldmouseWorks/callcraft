@@ -4,6 +4,7 @@
 //! and owns the manifest contract plus the safety rules for ids.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::validate::{Validated, validate_yaml};
 
@@ -84,7 +85,8 @@ pub struct PackExport {
 
 impl PackManifest {
     pub fn parse_yaml(text: &str) -> Result<Self, String> {
-        serde_saphyr::from_str(text).map_err(|error| format!("pack manifest YAML: {error}"))
+        crate::validate::parse_yaml_limited(text)
+            .map_err(|error| format!("pack manifest YAML: {error}"))
     }
 
     pub fn render_yaml(&self) -> Result<String, String> {
@@ -214,4 +216,146 @@ mod tests {
         manifest.version = "one".to_string();
         assert!(manifest.validate().is_err());
     }
+}
+
+pub const APPROVALS_FORMAT_ID: &str = "callcraft-approvals/v0.1";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalLedger {
+    pub format: String,
+    #[serde(default)]
+    pub entries: Vec<ApprovalEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalEntry {
+    pub scenario_id: String,
+    pub sha256: String,
+    pub status: ApprovalStatus,
+    pub by: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub imported: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalStatus {
+    Draft,
+    Approved,
+    Retired,
+}
+
+impl ApprovalStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Approved => "approved",
+            Self::Retired => "retired",
+        }
+    }
+}
+
+impl Default for ApprovalLedger {
+    fn default() -> Self {
+        Self {
+            format: APPROVALS_FORMAT_ID.to_string(),
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl ApprovalLedger {
+    pub fn parse_yaml(text: &str) -> Result<Self, String> {
+        crate::validate::parse_yaml_limited(text)
+            .map_err(|error| format!("approvals YAML: {error}"))
+    }
+
+    pub fn render_yaml(&self) -> Result<String, String> {
+        serde_saphyr::to_string(self).map_err(|error| format!("approvals render: {error}"))
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.format != APPROVALS_FORMAT_ID {
+            return Err(format!(
+                "approvals format must be '{APPROVALS_FORMAT_ID}', found '{}'",
+                self.format
+            ));
+        }
+        let mut ids = std::collections::HashSet::new();
+        for entry in &self.entries {
+            if !safe_id(&entry.scenario_id) {
+                return Err(format!(
+                    "invalid approved scenario id '{}'",
+                    entry.scenario_id
+                ));
+            }
+            if !ids.insert(entry.scenario_id.clone()) {
+                return Err(format!("duplicate approval for '{}'", entry.scenario_id));
+            }
+            if entry.sha256.len() != 64
+                || !entry
+                    .sha256
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit())
+            {
+                return Err(format!("invalid sha256 for '{}'", entry.scenario_id));
+            }
+            if entry.by.trim().is_empty() || entry.at.trim().is_empty() {
+                return Err(format!(
+                    "approval for '{}' needs by and at",
+                    entry.scenario_id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn status_for(&self, scenario_id: &str, sha256: &str) -> ApprovalStatus {
+        self.entries
+            .iter()
+            .find(|entry| entry.scenario_id == scenario_id)
+            .filter(|entry| entry.sha256.eq_ignore_ascii_case(sha256))
+            .map(|entry| entry.status)
+            .unwrap_or(ApprovalStatus::Draft)
+    }
+
+    pub fn remove(&mut self, scenario_id: &str) {
+        self.entries
+            .retain(|entry| entry.scenario_id != scenario_id);
+    }
+
+    pub fn set(
+        &mut self,
+        scenario_id: &str,
+        sha256: &str,
+        status: ApprovalStatus,
+        by: &str,
+        at: &str,
+        note: Option<String>,
+    ) {
+        self.remove(scenario_id);
+        if status != ApprovalStatus::Draft {
+            self.entries.push(ApprovalEntry {
+                scenario_id: scenario_id.to_string(),
+                sha256: sha256.to_string(),
+                status,
+                by: by.to_string(),
+                at: at.to_string(),
+                note,
+                imported: false,
+            });
+        }
+    }
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

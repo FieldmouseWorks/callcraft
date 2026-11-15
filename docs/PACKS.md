@@ -1,8 +1,9 @@
 # Agency packs
 
-Status: slices 1 and 2 implemented. Local storage, Save to pack, library
-browse/start, pack-scoped session start, `callcraft pack validate`, checksummed
-export/import with dry-run review, backups, and rollback.
+Status: slices 1–3 implemented. Local storage, Save to pack, library
+browse/start, hash-bound approvals, approved-only starts, report stamping,
+`callcraft pack validate`, checksummed export/import with dry-run review,
+backups, rollback, and bounded YAML parsing.
 
 An agency pack is a directory under the OS local-data directory. It is never
 committed to the repo and never uploaded by the app.
@@ -12,6 +13,7 @@ committed to the repo and never uploaded by the app.
 ```text
 packs/<pack-id>/
   callcraft-pack.yaml
+  approvals.yaml
   scenarios/<scenario-id>.scenario.yaml
 ```
 
@@ -69,9 +71,14 @@ error.
 - `POST /api/packs/scenarios` — save YAML into the default pack.
 - `POST /api/packs/{pack_id}/scenarios` — save YAML into a named pack.
 - `GET /api/packs/{pack_id}/scenarios/{scenario_id}` — read YAML for editing.
+- `POST /api/packs/{pack_id}/scenarios/{scenario_id}/approve` — approve the
+  current file hash; body may include `by` and `note`.
+- `POST /api/packs/{pack_id}/scenarios/{scenario_id}/retire` — retire the
+  current file hash.
 - `POST /api/packs/{pack_id}/export` — checksummed `.callcraftpack.zip` download.
 - `POST /api/packs/import/inspect` — dry-run review of an uploaded zip.
-- `POST /api/packs/import?mode=install|replace` — commit an inspected zip.
+- `POST /api/packs/import?mode=install|replace&accept_approvals=true|false` —
+  commit an inspected zip. Imported approvals are dropped unless accepted.
 - `POST /api/packs/{pack_id}/rollback` — restore the latest pre-import backup.
 - `POST /api/sessions` with `{"pack_id","scenario_id"}` — start a saved scenario.
   Raw YAML remains supported as a test-drive path.
@@ -102,22 +109,40 @@ trailing dots/spaces. Entry count, per-file size, total uncompressed size, and
 compression ratio are capped. The import endpoint accepts zip bytes only; it
 never accepts a filesystem path.
 
-## Status and approvals
+## Approvals
 
-Library entries are `draft` for now. The approval ledger is slice 3: it will
-bind `approved` to the scenario file hash, and an edit will return the entry to
-`draft`. The session-start response stamps `approval: "none"`; report scenario
-hash, pack id, pack version, and approval stamping land with the ledger.
+`approvals.yaml` is a ledger, not scenario content:
 
-On a single-user loopback install, approval is a record, not access control.
+```yaml
+format: callcraft-approvals/v0.1
+entries:
+  - scenario_id: chest-pain-001
+    sha256: <sha256 of stored scenario file bytes>
+    status: approved       # approved | retired
+    by: Training Division
+    at: 2026-11-15T18:00:00Z
+    note: Reviewed against local protocol
+    imported: false
+```
+
+Approval binds to the stored file hash. If the file changes, the effective
+status is `draft` even if the ledger still contains the old entry. Saving the
+same bytes again preserves approval; a real edit removes the entry. An
+unapproved or retired scenario cannot start through the pack API. Raw YAML
+remains a Test drive path, stamped `approval: none` and shown as UNAPPROVED.
+
+Reports carry `scenario_sha256`, `pack_id`, `pack_version`, and `approval`.
+On a single-user loopback install this is a record, not access control.
+
+## Status
+
+Library entries expose `draft`, `approved`, `retired`, or `invalid`. Approve and
+Retire act on the current file hash. Imported approvals are shown in the review
+and are applied only when the operator checks **Accept imported approvals**.
 
 ## Deferred
 
-- Approval ledger, report stamping, server-enforced approved-only starts.
-- YAML parser resource limits and malicious-YAML fixtures.
 - Pack creation/rename, agency profile, multi-pack Save target.
-- Merge, CSV import, SOP extraction, search/tags, geography picker, signing,
-  cloud sync.
-- Pack creation/rename and agency profile.
-- Merge, CSV import, SOP extraction, search/tags, geography picker, signing.
-- YAML parser resource limits and malicious-pack corpus.
+- Event evidence timestamps and a two-window observer split.
+- Merge, CSV import, SOP extraction, search/tags, geography picker.
+- Pack signing, a shared registry, and cloud sync.

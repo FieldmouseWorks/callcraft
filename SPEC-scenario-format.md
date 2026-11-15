@@ -163,6 +163,10 @@ scenario can be shared without leaking a jurisdiction's map data.
 {
   "scenario_id": "chest-pain-001",
   "scenario_version": "1.0.0",
+  "scenario_sha256": "…",
+  "pack_id": "local",
+  "pack_version": "0.1.0",
+  "approval": "approved",
   "session_id": "uuid",
   "mode": "voice",
   "started_at": "2026-11-15T18:00:00Z",

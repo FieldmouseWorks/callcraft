@@ -74,6 +74,18 @@ fn pack_api_saves_lists_and_starts_a_saved_scenario() {
             .contains("chest-pain-001")
     );
 
+    let approved: Value = client
+        .post(format!(
+            "{base}/api/packs/local/scenarios/chest-pain-001/approve"
+        ))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({"by": "test trainer"}))
+        .send()
+        .expect("approve")
+        .json()
+        .expect("approve JSON");
+    assert_eq!(approved["scenario"]["status"], "approved");
+
     let started: Value = client
         .post(format!("{base}/api/sessions"))
         .header("X-Callcraft-Token", "test-token")
@@ -89,6 +101,7 @@ fn pack_api_saves_lists_and_starts_a_saved_scenario() {
     assert_eq!(started["ok"], json!(true));
     assert_eq!(started["source"], "pack");
     assert_eq!(started["pack_id"], "local");
+    assert_eq!(started["approval"], "approved");
     assert_eq!(started["scenario"]["id"], "chest-pain-001");
     assert!(!started["events"].as_array().expect("events").is_empty());
 }
@@ -212,4 +225,75 @@ fn pack_export_and_import_round_trip_through_the_api() {
         .json()
         .expect("list JSON");
     assert_eq!(listing["packs"][0]["scenarios"][0]["id"], "chest-pain-001");
+}
+
+#[test]
+fn draft_scenarios_cannot_start_and_identical_save_keeps_approval() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let settings = SettingsStore::with_path(dir.path().join("adapters.json"), false);
+    let packs = PackStore::with_root(dir.path().join("packs"));
+    let (port, _handle) = start_with_adapters_store_and_packs(
+        0,
+        "test-token".to_string(),
+        SpeechConfig::default(),
+        CallerConfig::default(),
+        settings,
+        packs,
+    )
+    .expect("server starts");
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::blocking::Client::new();
+    let scenario = read("examples/chest-pain-001.scenario.yaml");
+
+    client
+        .post(format!("{base}/api/packs/scenarios"))
+        .header("X-Callcraft-Token", "test-token")
+        .body(scenario.clone())
+        .send()
+        .expect("save")
+        .error_for_status()
+        .expect("save status");
+
+    let rejected = client
+        .post(format!("{base}/api/sessions"))
+        .header("X-Callcraft-Token", "test-token")
+        .header("Content-Type", "application/json")
+        .json(&json!({"pack_id": "local", "scenario_id": "chest-pain-001"}))
+        .send()
+        .expect("unapproved start");
+    assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    client
+        .post(format!(
+            "{base}/api/packs/local/scenarios/chest-pain-001/approve"
+        ))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({"by": "test trainer"}))
+        .send()
+        .expect("approve")
+        .error_for_status()
+        .expect("approve status");
+
+    // Same bytes again: approval survives a no-op save.
+    let same = client
+        .post(format!("{base}/api/packs/scenarios"))
+        .header("X-Callcraft-Token", "test-token")
+        .body(scenario.clone())
+        .send()
+        .expect("same save")
+        .json::<Value>()
+        .expect("same JSON");
+    assert_eq!(same["scenario"]["status"], "approved");
+
+    // A real edit invalidates approval.
+    let changed = scenario.replace("Chest Pain — Adult, Alone at Home", "Changed title");
+    let edited = client
+        .post(format!("{base}/api/packs/scenarios"))
+        .header("X-Callcraft-Token", "test-token")
+        .body(changed)
+        .send()
+        .expect("changed save")
+        .json::<Value>()
+        .expect("changed JSON");
+    assert_eq!(edited["scenario"]["status"], "draft");
 }

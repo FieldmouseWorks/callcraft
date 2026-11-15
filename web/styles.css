@@ -685,6 +685,34 @@ textarea:focus, .input:focus, .turn-row input:focus { outline: none; border-colo
 
 .diagnostics[open] summary { color: var(--ink); }
 
+.approval-tag {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--muted);
+  font: 9px/1.2 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.approval-tag.approved { border-color: var(--pass); color: var(--pass); }
+.approval-tag.unapproved { border-color: var(--review); color: var(--review); }
+
+.library-status.approved { border-color: var(--pass); color: var(--pass); }
+.library-status.retired { color: var(--muted); }
+.library-actions { flex-wrap: wrap; }
+
+.import-approvals {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  font-size: 12px;
+}
+
+.import-approvals label { display: inline-flex; align-items: center; gap: 6px; margin-top: 5px; }
+
 /* ---------- Run ---------- */
 
 .session-panel { padding-top: 2px; }

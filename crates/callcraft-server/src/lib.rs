@@ -48,6 +48,7 @@ struct StoredSession {
     caller_failures: u32,
     caller_disabled: bool,
     turn_lock: Arc<tokio::sync::Mutex<()>>,
+    run_context: callcraft_core::report::RunContext,
 }
 
 /// Start the loopback server on a background thread.
@@ -204,6 +205,14 @@ fn app(state: AppState) -> Router {
         .route(
             "/api/packs/{pack_id}/scenarios/{scenario_id}",
             get(handlers::packs::open_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios/{scenario_id}/approve",
+            post(handlers::packs::approve_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios/{scenario_id}/retire",
+            post(handlers::packs::retire_scenario),
         )
         .route(
             "/api/packs/{pack_id}/export",

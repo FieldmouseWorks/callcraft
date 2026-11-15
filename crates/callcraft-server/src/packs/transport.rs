@@ -12,7 +12,9 @@ use tempfile::TempDir;
 use zip::CompressionMethod;
 use zip::write::SimpleFileOptions;
 
-use callcraft_core::pack::{PackExport, PackManifest, safe_id, validate_scenario_text};
+use callcraft_core::pack::{
+    ApprovalLedger, ApprovalStatus, PackExport, PackManifest, safe_id, validate_scenario_text,
+};
 use callcraft_core::validate::validate_yaml;
 
 use super::{PackStore, write_bytes_private};
@@ -59,6 +61,15 @@ pub struct ImportScenario {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ImportApproval {
+    pub scenario_id: String,
+    pub status: String,
+    pub by: String,
+    pub at: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ImportReport {
     pub pack_id: String,
     pub name: String,
@@ -69,6 +80,7 @@ pub struct ImportReport {
     pub checksum: String,
     pub can_import: bool,
     pub scenarios: Vec<ImportScenario>,
+    pub approvals: Vec<ImportApproval>,
     pub local_only: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -76,6 +88,7 @@ pub struct ImportReport {
 struct StagedPack {
     staging: TempDir,
     report: ImportReport,
+    ledger: ApprovalLedger,
 }
 
 impl PackStore {
@@ -102,6 +115,11 @@ impl PackStore {
         files.insert(
             "callcraft-pack.yaml".to_string(),
             exported_manifest.into_bytes(),
+        );
+        let approvals = super::read_ledger(&pack_dir.join("approvals.yaml"))?;
+        files.insert(
+            "approvals.yaml".to_string(),
+            approvals.render_yaml()?.into_bytes(),
         );
 
         let mut names: Vec<String> = files.keys().cloned().collect();
@@ -142,8 +160,13 @@ impl PackStore {
     }
 
     /// Import a zip after the caller has reviewed the dry run.
-    pub fn import_bytes(&self, bytes: &[u8], mode: ImportMode) -> Result<ImportReport, String> {
-        let staged = self.stage(bytes)?;
+    pub fn import_bytes(
+        &self,
+        bytes: &[u8],
+        mode: ImportMode,
+        accept_approvals: bool,
+    ) -> Result<ImportReport, String> {
+        let mut staged = self.stage(bytes)?;
         if staged.report.action != mode.as_str() {
             return Err(format!(
                 "import action is '{}', not '{}'",
@@ -151,6 +174,17 @@ impl PackStore {
                 mode.as_str()
             ));
         }
+        if accept_approvals {
+            for entry in &mut staged.ledger.entries {
+                entry.imported = true;
+            }
+        } else {
+            staged.ledger.entries.clear();
+        }
+        super::write_ledger(
+            &staged.staging.path().join("approvals.yaml"),
+            &staged.ledger,
+        )?;
         self.commit(staged, true)
     }
 
@@ -352,6 +386,42 @@ impl PackStore {
             };
         }
 
+        let approvals_path = staging.path().join("approvals.yaml");
+        let mut ledger = if approvals_path.is_file() {
+            let text = fs::read_to_string(&approvals_path)
+                .map_err(|error| format!("read imported approvals: {error}"))?;
+            let ledger = ApprovalLedger::parse_yaml(&text)?;
+            ledger.validate()?;
+            ledger
+        } else {
+            ApprovalLedger::default()
+        };
+        let incoming_hashes: HashMap<String, String> = extracted
+            .iter()
+            .filter_map(|(path, hash)| {
+                path.strip_prefix("scenarios/")
+                    .and_then(|name| name.strip_suffix(".scenario.yaml"))
+                    .map(|id| (id.to_string(), hash.clone()))
+            })
+            .collect();
+        ledger.entries.retain(|entry| {
+            incoming_hashes
+                .get(&entry.scenario_id)
+                .is_some_and(|hash| hash.eq_ignore_ascii_case(&entry.sha256))
+                && entry.status != ApprovalStatus::Draft
+        });
+        let approvals = ledger
+            .entries
+            .iter()
+            .map(|entry| ImportApproval {
+                scenario_id: entry.scenario_id.clone(),
+                status: entry.status.as_str().to_string(),
+                by: entry.by.clone(),
+                at: entry.at.clone(),
+                note: entry.note.clone(),
+            })
+            .collect();
+
         let report = ImportReport {
             pack_id: manifest.id.clone(),
             name: manifest.name,
@@ -362,10 +432,15 @@ impl PackStore {
             checksum: "ok".to_string(),
             can_import: errors.is_empty(),
             scenarios,
+            approvals,
             local_only,
             errors,
         };
-        Ok(StagedPack { staging, report })
+        Ok(StagedPack {
+            staging,
+            report,
+            ledger,
+        })
     }
 
     fn commit(&self, staged: StagedPack, backup: bool) -> Result<ImportReport, String> {
@@ -488,7 +563,7 @@ fn safe_zip_path(name: &str) -> Result<String, String> {
         return Err(format!("unsafe zip path '{name}'"));
     }
     match parts.as_slice() {
-        ["callcraft-pack.yaml"] | ["checksums.sha256"] => Ok(name.to_string()),
+        ["callcraft-pack.yaml"] | ["approvals.yaml"] | ["checksums.sha256"] => Ok(name.to_string()),
         ["scenarios", file] => {
             let id = file
                 .strip_suffix(".scenario.yaml")
@@ -729,7 +804,7 @@ safety:
         assert_eq!(report.scenarios[0].state, "new");
         assert!(report.can_import);
         target
-            .import_bytes(&bytes, ImportMode::Install)
+            .import_bytes(&bytes, ImportMode::Install, false)
             .expect("import");
         let (yaml, validated) = target.open("local", "test-call").expect("open");
         assert_eq!(validated.scenario.title, "Test call");
@@ -748,7 +823,7 @@ safety:
         let target_dir = tempfile::tempdir().expect("target dir");
         let target = PackStore::with_root(target_dir.path().join("packs"));
         target
-            .import_bytes(&first, ImportMode::Install)
+            .import_bytes(&first, ImportMode::Install, false)
             .expect("install first");
 
         source
@@ -759,7 +834,7 @@ safety:
         assert_eq!(report.action, "replace");
         assert_eq!(report.scenarios[0].state, "diverged");
         target
-            .import_bytes(&second, ImportMode::Replace)
+            .import_bytes(&second, ImportMode::Replace, false)
             .expect("replace");
         assert_eq!(
             target
@@ -820,5 +895,92 @@ requires:
         ]);
         let error = store.inspect_bytes(&bytes).expect_err("missing checksums");
         assert!(error.contains("checksums.sha256"));
+    }
+}
+
+#[cfg(test)]
+mod approval_transport_tests {
+    use super::*;
+    use crate::packs::DEFAULT_PACK_ID;
+
+    fn scenario(id: &str) -> String {
+        format!(
+            r#"format: callcraft-scenario/v0.1
+id: {id}
+title: Approval test
+version: 1.0.0
+license: CC-BY-4.0
+language: en-US
+incident_type: medical
+difficulty: basic
+duration_minutes: 5
+persona:
+  display_name: Test
+  age: 40
+facts:
+  - id: address
+    value: "1 Test Street"
+    disclosure: on_question
+    triggers: [where, address]
+rubric:
+  scoring: checklist
+  items:
+    - id: address_verified
+      description: Confirms the address
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: "(?i)address"
+safety:
+  disclaimer: Training simulation.
+"#
+        )
+    }
+
+    #[test]
+    fn imported_approvals_need_explicit_acceptance() {
+        let source_dir = tempfile::tempdir().expect("source dir");
+        let source = PackStore::with_root(source_dir.path().join("packs"));
+        source
+            .save_default(&scenario("approval-call"))
+            .expect("save");
+        source
+            .set_approval(
+                DEFAULT_PACK_ID,
+                "approval-call",
+                ApprovalStatus::Approved,
+                "test trainer",
+                None,
+            )
+            .expect("approve");
+        let (bytes, _) = source.export(DEFAULT_PACK_ID).expect("export");
+
+        let declined_dir = tempfile::tempdir().expect("declined dir");
+        let declined = PackStore::with_root(declined_dir.path().join("packs"));
+        let report = declined.inspect_bytes(&bytes).expect("inspect");
+        assert_eq!(report.approvals.len(), 1);
+        declined
+            .import_bytes(&bytes, ImportMode::Install, false)
+            .expect("declined import");
+        assert_eq!(
+            declined
+                .open_with_metadata(DEFAULT_PACK_ID, "approval-call")
+                .expect("open declined")
+                .approval,
+            "draft"
+        );
+
+        let accepted_dir = tempfile::tempdir().expect("accepted dir");
+        let accepted = PackStore::with_root(accepted_dir.path().join("packs"));
+        accepted
+            .import_bytes(&bytes, ImportMode::Install, true)
+            .expect("accepted import");
+        assert_eq!(
+            accepted
+                .open_with_metadata(DEFAULT_PACK_ID, "approval-call")
+                .expect("open accepted")
+                .approval,
+            "approved"
+        );
     }
 }

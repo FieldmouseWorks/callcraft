@@ -203,7 +203,9 @@ fn sim(
     print_summary(scenario, &session, &evaluation);
 
     let log = callcraft_core::to_jsonl(&session, scenario);
-    let built = report::build(scenario, &session, evaluation, &log);
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let context = report::RunContext::direct(callcraft_core::pack::sha256_hex(&bytes));
+    let built = report::build(scenario, &session, evaluation, &log, &context);
 
     if let Some(out) = out {
         std::fs::write(out, format!("{}\n", report::to_json(&built)))

@@ -2,6 +2,7 @@ use std::sync::OnceLock;
 
 use jsonschema::Validator;
 use regex::Regex;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::scenario::{Disclosure, FORMAT_ID, Scenario};
@@ -24,9 +25,34 @@ pub struct Validated {
 }
 
 pub fn validate_yaml(text: &str, strict: bool) -> Result<Validated, ValidationError> {
-    let value: Value =
-        serde_saphyr::from_str(text).map_err(|e| ValidationError::Yaml(e.to_string()))?;
+    let value: Value = parse_yaml_limited(text).map_err(ValidationError::Yaml)?;
     validate_value(&value, strict)
+}
+
+/// Parse untrusted YAML with explicit resource limits. Scenario files and pack
+/// manifests are small; the limits keep imports from becoming parser bombs.
+pub fn parse_yaml_limited<T: DeserializeOwned>(text: &str) -> Result<T, String> {
+    const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
+    if text.len() > MAX_INPUT_BYTES {
+        return Err(format!("YAML input exceeds {MAX_INPUT_BYTES} bytes"));
+    }
+    let options = serde_saphyr::options! {
+        budget: serde_saphyr::budget! {
+            max_documents: 1,
+            max_events: 500_000,
+            max_aliases: 64,
+            max_anchors: 64,
+            max_depth: 32,
+            max_nodes: 100_000,
+            max_total_scalar_bytes: 8 * 1024 * 1024,
+        },
+        alias_limits: serde_saphyr::alias_limits! {
+            max_total_replayed_events: 100_000,
+            max_replay_stack_depth: 16,
+            max_alias_expansions_per_anchor: 64,
+        },
+    };
+    serde_saphyr::from_str_with_options(text, options).map_err(|error| error.to_string())
 }
 
 pub fn validate_value(value: &Value, strict: bool) -> Result<Validated, ValidationError> {
@@ -179,4 +205,38 @@ fn ten_digit_phone() -> &'static Regex {
 fn seven_digit_phone() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\b(\d{3})[-.\s](\d{4})\b").expect("phone regex"))
+}
+
+#[cfg(test)]
+mod parser_limit_tests {
+    use super::parse_yaml_limited;
+
+    #[test]
+    fn rejects_very_deep_yaml() {
+        let yaml = format!("value: {}1{}", "[".repeat(80), "]".repeat(80));
+        assert!(parse_yaml_limited::<serde_json::Value>(&yaml).is_err());
+    }
+
+    #[test]
+    fn rejects_alias_amplification() {
+        let mut yaml = String::from("a: &a [x, x, x, x, x, x, x, x]\n");
+        let mut previous = "a".to_string();
+        for index in 0..8 {
+            let name = format!("n{index}");
+            let aliases = (0..10)
+                .map(|_| format!("*{previous}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            yaml.push_str(&format!("{name}: &{name} [{aliases}]\n"));
+            previous = name;
+        }
+        assert!(parse_yaml_limited::<serde_json::Value>(&yaml).is_err());
+    }
+
+    #[test]
+    fn accepts_small_structured_yaml() {
+        let value: serde_json::Value =
+            parse_yaml_limited("name: test\nitems: [one, two]\n").expect("small yaml");
+        assert_eq!(value["name"], "test");
+    }
 }

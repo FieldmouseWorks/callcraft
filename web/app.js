@@ -21,6 +21,7 @@ const briefDuration = $("brief-duration");
 const briefVoice = $("brief-voice");
 const briefCounts = $("brief-counts");
 const sessionScenario = $("session-scenario");
+const sessionApproval = $("session-approval");
 const libraryList = $("scenario-library");
 const libraryPack = $("library-pack");
 const libraryMeta = $("library-meta");
@@ -294,6 +295,9 @@ function beginSession(data) {
   refreshVoiceStatus();
   $("session-title").textContent = data.scenario.title;
   $("session-stage-label").textContent = "Run / Live call";
+  const approval = data.approval || "none";
+  sessionApproval.textContent = approval === "none" ? "UNAPPROVED" : approval.toUpperCase();
+  sessionApproval.className = `approval-tag ${approval === "approved" ? "approved" : "unapproved"}`;
   sessionScenario.innerHTML = `
     <strong>${escapeHtml(data.scenario.title)}</strong>
     <p class="meta mono">${escapeHtml(data.scenario.id)}</p>
@@ -357,11 +361,21 @@ function renderLibrary() {
       const difficulty = scenario.difficulty || "—";
       const duration = scenario.duration_minutes ? `${scenario.duration_minutes} min` : "—";
       const status = scenario.valid ? (scenario.status || "draft") : "invalid";
+      const approved = status === "approved";
       const error = scenario.error
         ? `<p class="library-warning">${escapeHtml(scenario.error)}</p>`
         : "";
       const warnings = scenario.warnings?.length
         ? `<p class="library-warning">${scenario.warnings.length} warning(s)</p>`
+        : "";
+      const start = approved
+        ? `<button class="primary" type="button" data-start-scenario="${escapeHtml(scenario.id)}">Start</button>`
+        : `<button class="secondary" type="button" data-test-scenario="${escapeHtml(scenario.id)}">Test drive</button>`;
+      const approvalAction = scenario.valid && !approved
+        ? `<button class="secondary" type="button" data-approve-scenario="${escapeHtml(scenario.id)}">Approve</button>`
+        : "";
+      const retireAction = approved
+        ? `<button class="secondary" type="button" data-retire-scenario="${escapeHtml(scenario.id)}">Retire</button>`
         : "";
       return `
         <article class="library-card">
@@ -370,13 +384,14 @@ function renderLibrary() {
               <h4 class="library-title">${escapeHtml(scenario.title || scenario.id)}</h4>
               <p class="library-id">${escapeHtml(scenario.id)} · v${escapeHtml(scenario.version || "—")}</p>
             </div>
-            <span class="library-status ${scenario.valid ? "" : "bad"}">${escapeHtml(status)}</span>
+            <span class="library-status ${scenario.valid ? status : "bad"}">${escapeHtml(status)}</span>
           </div>
           <p class="library-facts">${escapeHtml(difficulty)} · ${escapeHtml(duration)} · ${scenario.facts} facts · ${scenario.rubric_items} rubric · ${scenario.critical_items} critical</p>
           ${error}${warnings}
           <div class="library-actions">
-            <button class="primary" type="button" data-start-scenario="${escapeHtml(scenario.id)}" ${scenario.valid ? "" : "disabled"}>Test drive</button>
+            ${start}
             <button class="secondary" type="button" data-open-scenario="${escapeHtml(scenario.id)}">Open</button>
+            ${approvalAction}${retireAction}
           </div>
         </article>
       `;
@@ -388,8 +403,54 @@ function renderLibrary() {
       startPackScenario(pack.id, button.dataset.startScenario)
     );
   }
+  for (const button of libraryList.querySelectorAll("[data-test-scenario]")) {
+    button.addEventListener("click", () =>
+      testDrivePackScenario(pack.id, button.dataset.testScenario)
+    );
+  }
   for (const button of libraryList.querySelectorAll("[data-open-scenario]")) {
     button.addEventListener("click", () => openPackScenario(pack.id, button.dataset.openScenario));
+  }
+  for (const button of libraryList.querySelectorAll("[data-approve-scenario]")) {
+    button.addEventListener("click", () =>
+      setScenarioApproval(pack.id, button.dataset.approveScenario, "approve")
+    );
+  }
+  for (const button of libraryList.querySelectorAll("[data-retire-scenario]")) {
+    button.addEventListener("click", () =>
+      setScenarioApproval(pack.id, button.dataset.retireScenario, "retire")
+    );
+  }
+}
+
+async function testDrivePackScenario(packId, scenarioId) {
+  try {
+    const data = await api(
+      `/api/packs/${encodeURIComponent(packId)}/scenarios/${encodeURIComponent(scenarioId)}`
+    );
+    scenarioInput.value = data.yaml;
+    updateBrief();
+    setStatus("Unapproved test drive", "warn");
+    await startSession();
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function setScenarioApproval(packId, scenarioId, action) {
+  try {
+    const data = await api(
+      `/api/packs/${encodeURIComponent(packId)}/scenarios/${encodeURIComponent(scenarioId)}/${action}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ by: "local trainer" }),
+      }
+    );
+    await loadLibrary();
+    setStatus(action === "approve" ? "Scenario approved" : "Scenario retired", "ok");
+  } catch (error) {
+    setStatus(error.message, "bad");
   }
 }
 
@@ -493,6 +554,13 @@ function renderImportReview(report) {
   const localOnly = (report.local_only || []).length
     ? `<p class="library-warning">Replace removes local scenarios: ${escapeHtml(report.local_only.join(", "))}</p>`
     : "";
+  const approvals = report.approvals || [];
+  const approvalBlock = approvals.length
+    ? `<div class="import-approvals">
+        <strong>${approvals.length} imported approval(s)</strong> — accepted only when checked.
+        <label><input id="accept-approvals" type="checkbox"> Accept imported approvals</label>
+      </div>`
+    : "";
   const actionLabel = report.action === "install" ? "Install pack" : "Replace pack";
   importReview.innerHTML = `
     <div class="import-head">
@@ -503,7 +571,7 @@ function renderImportReview(report) {
       <span class="import-state ${escapeHtml(report.action)}">${escapeHtml(report.action)}</span>
     </div>
     <p class="meta">checksum: ${escapeHtml(report.checksum)} · ${report.scenarios.length} scenario(s)</p>
-    ${errors}${localOnly}
+    ${errors}${localOnly}${approvalBlock}
     <table class="import-table">
       <thead><tr><th>State</th><th>ID</th><th>Title</th><th>Version</th><th>Critical</th><th>Notes</th></tr></thead>
       <tbody>${rows}</tbody>
@@ -522,7 +590,9 @@ async function confirmPackImport() {
   setStatus(report.action === "install" ? "Installing pack..." : "Replacing pack...");
   try {
     const response = await fetch(
-      `/api/packs/import?mode=${encodeURIComponent(report.action)}`,
+      `/api/packs/import?mode=${encodeURIComponent(report.action)}${
+        document.getElementById("accept-approvals")?.checked ? "&accept_approvals=true" : ""
+      }`,
       {
         method: "POST",
         headers: {
@@ -792,6 +862,8 @@ function renderScorecard(data) {
     `cost $${Number(data.cost?.total_usd || 0).toFixed(2)}`,
     `drift ${evaluation.drift_rejections}`,
     `adapter faults ${evaluation.adapter_failures || 0}`,
+    `approval ${data.approval || "none"}`,
+    `scenario ${String(data.scenario_sha256 || "").slice(0, 12)}`,
     latency ? `p50 ${latency} ms` : null,
   ]
     .filter(Boolean)

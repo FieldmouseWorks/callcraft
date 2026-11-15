@@ -8,10 +8,19 @@ use serde_json::json;
 
 use crate::AppState;
 use crate::packs::{ImportMode, ImportReport};
+use callcraft_core::pack::ApprovalStatus;
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ApprovalPayload {
+    by: Option<String>,
+    note: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ImportQuery {
     mode: Option<String>,
+    #[serde(default)]
+    accept_approvals: bool,
 }
 use crate::auth::{TokenQuery, auth_guard, error_response};
 
@@ -73,13 +82,16 @@ pub(crate) async fn open_scenario(
     if let Some(response) = auth_guard(&state, &headers, &query) {
         return response;
     }
-    match state.packs.open(&pack_id, &scenario_id) {
-        Ok((yaml, validated)) => Json(json!({
+    match state.packs.open_with_metadata(&pack_id, &scenario_id) {
+        Ok(opened) => Json(json!({
             "ok": true,
             "pack_id": pack_id,
-            "yaml": yaml,
-            "scenario": validated.scenario,
-            "warnings": validated.warnings,
+            "yaml": opened.yaml,
+            "scenario": opened.validated.scenario,
+            "warnings": opened.validated.warnings,
+            "scenario_sha256": opened.scenario_sha256,
+            "pack_version": opened.pack_version,
+            "approval": opened.approval,
         }))
         .into_response(),
         Err(error) => error_response(StatusCode::NOT_FOUND, &error),
@@ -146,7 +158,10 @@ pub(crate) async fn import_pack(
         Ok(mode) => mode,
         Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
     };
-    match state.packs.import_bytes(&body, mode) {
+    match state
+        .packs
+        .import_bytes(&body, mode, import.accept_approvals)
+    {
         Ok(report) => json_import(&report, false).into_response(),
         Err(error) => error_response(StatusCode::BAD_REQUEST, &error),
     }
@@ -174,4 +189,66 @@ fn json_import(report: &ImportReport, rollback: bool) -> Json<serde_json::Value>
         "rollback": rollback,
         "report": report,
     }))
+}
+
+pub(crate) async fn approve_scenario(
+    State(state): State<AppState>,
+    Path((pack_id, scenario_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<ApprovalPayload>,
+) -> Response {
+    set_approval(
+        state,
+        pack_id,
+        scenario_id,
+        headers,
+        query,
+        payload,
+        ApprovalStatus::Approved,
+    )
+}
+
+pub(crate) async fn retire_scenario(
+    State(state): State<AppState>,
+    Path((pack_id, scenario_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<ApprovalPayload>,
+) -> Response {
+    set_approval(
+        state,
+        pack_id,
+        scenario_id,
+        headers,
+        query,
+        payload,
+        ApprovalStatus::Retired,
+    )
+}
+
+fn set_approval(
+    state: AppState,
+    pack_id: String,
+    scenario_id: String,
+    headers: HeaderMap,
+    query: TokenQuery,
+    payload: ApprovalPayload,
+    status: ApprovalStatus,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    let by = payload
+        .by
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "local trainer".to_string());
+    match state
+        .packs
+        .set_approval(&pack_id, &scenario_id, status, &by, payload.note)
+    {
+        Ok(scenario) => Json(json!({"ok": true, "scenario": scenario})).into_response(),
+        Err(error) => error_response(StatusCode::BAD_REQUEST, &error),
+    }
 }

@@ -81,6 +81,15 @@ fn session_api_scores_a_good_call() {
         .expect("finish request");
     assert!(response.status().is_success());
     let finished: serde_json::Value = response.json().expect("finish JSON");
+    assert_eq!(finished["report"]["approval"], "none");
+    assert!(finished["report"]["pack_id"].is_null());
+    assert_eq!(
+        finished["report"]["scenario_sha256"]
+            .as_str()
+            .expect("scenario hash")
+            .len(),
+        64
+    );
     assert!(
         finished["report"]["stages"]
             .as_array()
