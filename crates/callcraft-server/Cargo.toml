@@ -18,7 +18,18 @@ serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+keyring-core = "1.0.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust", "vendored"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1.1.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = "1.0.2"
 
 [dev-dependencies]
+tempfile.workspace = true
 callcraft-core = { path = "../callcraft-core" }
 reqwest.workspace = true

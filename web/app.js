@@ -410,6 +410,8 @@ async function runDiagnostics() {
 
 $("run-diagnostics").addEventListener("click", runDiagnostics);
 
+window.refreshVoiceStatus = refreshVoiceStatus;
+
 if (!token) {
   setStatus("Missing session token — open the URL printed by `callcraft serve`.", "bad");
   $("start").disabled = true;

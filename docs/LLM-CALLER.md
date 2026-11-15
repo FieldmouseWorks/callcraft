@@ -61,11 +61,20 @@ The server responds with `caller_source: "llm"` and the rendered text.
 
 ## Configuration
 
+The caller runs through the provider registry. The Settings tab is the normal
+path; environment variables are for CLI and consortium deployments:
+
 | Variable | Meaning |
 |---|---|
-| `CALLCRAFT_CALLER_URL` | Base URL of the chat-completions service. Unset keeps the deterministic caller. |
-| `CALLCRAFT_CALLER_MODEL` | Model name sent to the adapter (default `default`). |
-| `CALLCRAFT_ADAPTER_TOKEN` | Optional bearer token shared with STT/TTS. |
+| `CALLCRAFT_CALLER_PROVIDER` | Provider id (`openai`, `anthropic`, `openai-compatible`, `ollama`, `llama-cpp`, `lm-studio`, `vllm`, `openrouter`). |
+| `CALLCRAFT_CALLER_URL` | Base URL override. With no provider id, implies `openai-compatible`. |
+| `CALLCRAFT_CALLER_MODEL` | Model name (default `default`). |
+| `CALLCRAFT_CALLER_API_KEY` | API key for environment-based deployments. |
+
+Stored settings live in `callcraft/adapters.json`; keys live in the OS keychain.
+Anthropic consumer subscription OAuth is not available to third-party apps;
+OpenAI Sign in with ChatGPT is partner-gated. See
+[PROVIDERS.md](PROVIDERS.md).
 
 `GET /api/voice/status` reports `caller: "llm" | "deterministic"`.
 

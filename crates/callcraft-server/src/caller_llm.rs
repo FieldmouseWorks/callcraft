@@ -5,53 +5,15 @@
 //! structurally impossible while still letting the model do the hard part:
 //! mapping an unprompted trainee utterance to the right authored fact.
 //!
-//! The adapter is OpenAI-compatible chat completions over loopback HTTP. A
-//! transport failure falls back to the deterministic caller; an invalid
-//! decision (unknown fact, premature after_event fact) is counted as caller
-//! drift and also falls back.
+//! Provider-specific HTTP lives in `providers`; this module builds the prompt,
+//! parses the decision, and renders caller speech. A transport failure falls
+//! back to the deterministic caller; an invalid decision (unknown fact,
+//! premature after_event fact) is counted as caller drift and also falls back.
 
 use callcraft_core::scenario::{Disclosure, Scenario};
 use serde::Deserialize;
-use serde_json::json;
 
-#[derive(Debug, Clone)]
-pub struct CallerConfig {
-    pub url: Option<String>,
-    pub model: String,
-    pub adapter_token: Option<String>,
-}
-
-impl Default for CallerConfig {
-    fn default() -> Self {
-        Self {
-            url: None,
-            model: "default".to_string(),
-            adapter_token: None,
-        }
-    }
-}
-
-impl CallerConfig {
-    pub fn from_env() -> Self {
-        Self {
-            url: env_url("CALLCRAFT_CALLER_URL"),
-            model: env_string("CALLCRAFT_CALLER_MODEL").unwrap_or_else(|| "default".to_string()),
-            adapter_token: env_string("CALLCRAFT_ADAPTER_TOKEN"),
-        }
-    }
-}
-
-fn env_url(key: &str) -> Option<String> {
-    env_string(key)
-        .map(|value| value.trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_string(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-}
+use crate::providers::{self, CallerConfig, ProviderError};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Decision {
@@ -79,23 +41,6 @@ impl CallerError {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatResponse {
-    #[serde(default)]
-    choices: Vec<Choice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Choice {
-    message: Message,
-}
-
-#[derive(Debug, Deserialize)]
-struct Message {
-    #[serde(default)]
-    content: String,
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn decide(
     client: &reqwest::Client,
@@ -107,49 +52,14 @@ pub async fn decide(
     elapsed_s: f64,
     latest: &str,
 ) -> Result<Decision, CallerError> {
-    let Some(url) = &config.url else {
-        return Err(CallerError::Transport(
-            "caller URL is not configured".to_string(),
-        ));
-    };
     let system = build_prompt(scenario, transcript, events, disclosed, elapsed_s);
-
-    let mut request = client
-        .post(format!("{}/v1/chat/completions", url.trim_end_matches('/')))
-        .json(&json!({
-            "model": config.model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": latest}
-            ]
-        }));
-    if let Some(token) = &config.adapter_token {
-        request = request.bearer_auth(token);
-    }
-
-    let response = request
-        .send()
+    let content = providers::complete(client, config, &system, latest)
         .await
-        .map_err(|error| CallerError::Transport(format!("caller request failed: {error}")))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(CallerError::Transport(format!(
-            "caller returned {status}: {}",
-            snippet(&body)
-        )));
-    }
-    let payload: ChatResponse = response
-        .json()
-        .await
-        .map_err(|error| CallerError::Transport(format!("caller response: {error}")))?;
-    let content = payload
-        .choices
-        .first()
-        .map(|choice| choice.message.content.as_str())
-        .unwrap_or_default();
-    parse_decision(content)
+        .map_err(|error| match error {
+            ProviderError::Transport(message) => CallerError::Transport(message),
+            ProviderError::Invalid(message) => CallerError::Invalid(message),
+        })?;
+    parse_decision(&content)
 }
 
 fn parse_decision(content: &str) -> Result<Decision, CallerError> {
@@ -307,8 +217,4 @@ fn disclosure_label(disclosure: Disclosure) -> &'static str {
         Disclosure::NeverUnless => "never_unless",
         Disclosure::AfterEvent => "after_event",
     }
-}
-
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
 }

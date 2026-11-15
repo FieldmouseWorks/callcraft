@@ -76,6 +76,18 @@ Contracts, provider notes, and privacy rules:
 authored fact ids only; the server renders the words:
 [docs/LLM-CALLER.md](docs/LLM-CALLER.md).
 
+## Provider settings
+
+The **Settings** tab configures the caller LLM against a provider registry:
+OpenAI API, Anthropic API, any OpenAI-compatible endpoint, Ollama, llama.cpp,
+LM Studio, vLLM, and OpenRouter. A test connection runs one real caller
+decision and reports model, latency, chosen facts, and rendered speech.
+
+API keys live in the OS keychain; non-secret settings live in a local config
+file. Anthropic consumer subscription OAuth is not available to third-party
+apps, and OpenAI's Sign in with ChatGPT plan usage is partner-gated. Details:
+[docs/PROVIDERS.md](docs/PROVIDERS.md).
+
 ## Windows spike
 
 Before voice work, the desktop shell must be proven on the pilot's platform.
@@ -133,9 +145,10 @@ PILOT-30-DAY.md    pilot plan and success criteria
 ## Status
 
 v0.1 — text and voice turns, deterministic caller with optional LLM
-decisioning, checklist scoring, JSON reports, byte-identical replay, session
-API, runner UI, structured authoring UI, and a Tauri shell scaffold. Not built
-yet: native file dialog, auth beyond the per-launch token. The 30-day pilot criteria in
+decisioning, provider registry with keychain-backed settings, checklist
+scoring, JSON reports, byte-identical replay, session API, runner UI,
+structured authoring UI, and a Tauri shell scaffold. Not built yet: native file
+dialog, auth beyond the per-launch token. The 30-day pilot criteria in
 [PILOT-30-DAY.md](PILOT-30-DAY.md) decide whether any of that gets built.
 
 Dependency and release rules: [docs/DEPENDENCY-POLICY.md](docs/DEPENDENCY-POLICY.md).

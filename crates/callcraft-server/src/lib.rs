@@ -5,8 +5,9 @@
 //! model and one test surface.
 
 mod caller_llm;
+pub mod providers;
 
-pub use caller_llm::CallerConfig;
+pub use providers::CallerConfig;
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
@@ -32,6 +33,7 @@ use callcraft_core::{CallerEngine, report::Report};
 const INDEX_HTML: &str = include_str!("../../../web/index.html");
 const APP_JS: &str = include_str!("../../../web/app.js");
 const AUTHOR_JS: &str = include_str!("../../../web/author.js");
+const SETTINGS_JS: &str = include_str!("../../../web/settings.js");
 const STYLES_CSS: &str = include_str!("../../../web/styles.css");
 const EXAMPLE_SCENARIO: &str = include_str!("../../../examples/chest-pain-001.scenario.yaml");
 
@@ -43,7 +45,8 @@ struct AppState {
     token: Arc<String>,
     sessions: Arc<Mutex<HashMap<String, StoredSession>>>,
     voice: VoiceConfig,
-    caller: CallerConfig,
+    caller: Arc<Mutex<CallerConfig>>,
+    settings: providers::SettingsStore,
     http: reqwest::Client,
 }
 
@@ -113,12 +116,9 @@ fn env_string(key: &str) -> Option<String> {
 /// Port 0 asks the OS for an ephemeral port. Returns the actual port and a
 /// join handle; the caller decides how long to keep it alive.
 pub fn start(port: u16, token: String) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
-    start_with_adapters(
-        port,
-        token,
-        VoiceConfig::from_env(),
-        CallerConfig::from_env(),
-    )
+    let settings = providers::SettingsStore::from_env();
+    let caller = CallerConfig::load(&settings);
+    start_with_adapters_and_store(port, token, VoiceConfig::from_env(), caller, settings)
 }
 
 /// Start with explicit voice adapters and a deterministic caller.
@@ -137,6 +137,24 @@ pub fn start_with_adapters(
     voice: VoiceConfig,
     caller: CallerConfig,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
+    start_with_adapters_and_store(
+        port,
+        token,
+        voice,
+        caller,
+        providers::SettingsStore::from_env(),
+    )
+}
+
+/// Start with explicit adapters and settings storage. Tests use this to keep
+/// config files out of the real user config directory.
+pub fn start_with_adapters_and_store(
+    port: u16,
+    token: String,
+    voice: VoiceConfig,
+    caller: CallerConfig,
+    settings: providers::SettingsStore,
+) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
     listener.set_nonblocking(true)?;
     let actual_port = listener.local_addr()?.port();
@@ -148,7 +166,8 @@ pub fn start_with_adapters(
         token: Arc::new(token),
         sessions: Arc::new(Mutex::new(HashMap::new())),
         voice,
-        caller,
+        caller: Arc::new(Mutex::new(caller)),
+        settings,
         http,
     };
 
@@ -171,11 +190,16 @@ fn app(state: AppState) -> Router {
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/author.js", get(author_js))
+        .route("/settings.js", get(settings_js))
         .route("/styles.css", get(styles))
         .route("/api/health", get(health))
         .route("/api/example", get(example))
         .route("/api/validate", post(validate))
         .route("/api/voice/status", get(voice_status))
+        .route("/api/providers", get(providers_list))
+        .route("/api/providers/test", post(provider_test))
+        .route("/api/providers/configure", post(provider_configure))
+        .route("/api/providers/reset", post(provider_reset))
         .route("/api/scenario/parse", post(parse_scenario))
         .route("/api/scenario/validate", post(validate_scenario_json))
         .route("/api/scenario/render", post(render_scenario))
@@ -208,6 +232,14 @@ async fn author_js() -> Response {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         AUTHOR_JS,
+    )
+        .into_response()
+}
+
+async fn settings_js() -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        SETTINGS_JS,
     )
         .into_response()
 }
@@ -570,10 +602,11 @@ async fn produce_turn(
     let mut caller_error: Option<String> = None;
     let mut drift = false;
 
-    if state.caller.url.is_some() {
+    let caller_config = state.caller.lock().expect("caller lock").clone();
+    if caller_config.is_enabled() {
         match caller_llm::decide(
             &state.http,
-            &state.caller,
+            &caller_config,
             &scenario,
             &transcript,
             &events,
@@ -738,11 +771,16 @@ async fn voice_status(
     if let Some(response) = auth_guard(&state, &headers, &query) {
         return response;
     }
+    let caller_mode = if state.caller.lock().expect("caller lock").is_enabled() {
+        "llm"
+    } else {
+        "deterministic"
+    };
     Json(json!({
         "ok": true,
         "stt": state.voice.stt_url.is_some(),
         "tts": state.voice.tts_url.is_some(),
-        "caller": if state.caller.url.is_some() { "llm" } else { "deterministic" },
+        "caller": caller_mode,
     }))
     .into_response()
 }
@@ -920,6 +958,216 @@ async fn synthesize(
 
 fn snippet(text: &str) -> String {
     text.chars().take(200).collect()
+}
+
+#[derive(Debug, Deserialize)]
+struct ProviderPayload {
+    provider_id: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+}
+
+fn provided_api_key(payload: &ProviderPayload) -> Option<String> {
+    payload
+        .api_key
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn stored_api_key(state: &AppState, provider_id: &str) -> Option<String> {
+    state.settings.load_key(provider_id).or_else(|| {
+        let caller = state.caller.lock().expect("caller lock");
+        if caller.provider_id.as_deref() == Some(provider_id) {
+            caller.api_key.clone()
+        } else {
+            None
+        }
+    })
+}
+
+fn active_provider(state: &AppState) -> serde_json::Value {
+    let caller = state.caller.lock().expect("caller lock");
+    json!({
+        "provider_id": caller.provider_id,
+        "base_url": caller.base_url,
+        "model": caller.model,
+        "api_key_set": caller
+            .api_key
+            .as_deref()
+            .map(|key| !key.trim().is_empty())
+            .unwrap_or(false),
+        "enabled": caller.is_enabled(),
+    })
+}
+
+async fn providers_list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    Json(json!({
+        "ok": true,
+        "providers": providers::PROVIDERS,
+        "active": active_provider(&state),
+        "keyring": state.settings.keyring_enabled(),
+    }))
+    .into_response()
+}
+
+async fn provider_test(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<ProviderPayload>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    let api_key =
+        provided_api_key(&payload).or_else(|| stored_api_key(&state, &payload.provider_id));
+    let config = match providers::config_from_request(
+        &payload.provider_id,
+        payload.base_url.clone(),
+        payload.model.clone(),
+        api_key,
+    ) {
+        Ok(config) => config,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+    };
+    let scenario = match callcraft_core::validate_yaml(EXAMPLE_SCENARIO, false) {
+        Ok(validated) => validated.scenario,
+        Err(error) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("embedded scenario: {error}"),
+            );
+        }
+    };
+
+    let started = Instant::now();
+    match caller_llm::decide(
+        &state.http,
+        &config,
+        &scenario,
+        &[],
+        &[],
+        &[],
+        0.0,
+        "Where are you located?",
+    )
+    .await
+    {
+        Ok(decision) => match caller_llm::render(&decision, &scenario, &[]) {
+            Ok((caller, fact_ids)) => Json(json!({
+                "ok": true,
+                "provider_id": config.provider_id,
+                "model": config.model,
+                "latency_ms": started.elapsed().as_millis(),
+                "fact_ids": fact_ids,
+                "style": decision.style,
+                "caller": caller,
+            }))
+            .into_response(),
+            Err(error) => Json(json!({
+                "ok": false,
+                "error": error.message(),
+                "latency_ms": started.elapsed().as_millis(),
+            }))
+            .into_response(),
+        },
+        Err(error) => Json(json!({
+            "ok": false,
+            "error": error.message(),
+            "latency_ms": started.elapsed().as_millis(),
+        }))
+        .into_response(),
+    }
+}
+
+async fn provider_configure(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<ProviderPayload>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+
+    if payload.provider_id == "deterministic" {
+        if let Err(error) = state.settings.clear() {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+        }
+        *state.caller.lock().expect("caller lock") = CallerConfig::default();
+        return Json(json!({
+            "ok": true,
+            "active": active_provider(&state),
+        }))
+        .into_response();
+    }
+
+    let provided_key = provided_api_key(&payload);
+    let api_key = provided_key
+        .clone()
+        .or_else(|| stored_api_key(&state, &payload.provider_id));
+    let config = match providers::config_from_request(
+        &payload.provider_id,
+        payload.base_url.clone(),
+        payload.model.clone(),
+        api_key,
+    ) {
+        Ok(config) => config,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+    };
+
+    if let Some(key) = provided_key.as_deref()
+        && let Err(error) = state.settings.save_key(&payload.provider_id, key)
+    {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+    let stored = providers::StoredConfig {
+        provider_id: payload.provider_id.clone(),
+        base_url: config.base_url.clone(),
+        model: config.model.clone(),
+    };
+    if let Err(error) = state.settings.save(&stored) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+
+    *state.caller.lock().expect("caller lock") = config;
+    Json(json!({
+        "ok": true,
+        "active": active_provider(&state),
+        "keyring": state.settings.keyring_enabled(),
+    }))
+    .into_response()
+}
+
+async fn provider_reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    if let Err(error) = state.settings.clear() {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+    *state.caller.lock().expect("caller lock") = CallerConfig::default();
+    Json(json!({
+        "ok": true,
+        "active": active_provider(&state),
+    }))
+    .into_response()
 }
 
 fn now_iso() -> String {
