@@ -77,7 +77,7 @@ and SOP extraction.
   accepted.
 - Explicit YAML parser budgets plus alias-amplification and deep-nesting
   fixtures.
-- Issue: #14.
+- PR #16; issue #14.
 
 ### Agency packs
 
@@ -87,6 +87,7 @@ and SOP extraction.
 - Checksummed zip export, two-step import review, install/replace, backup and
   rollback, zip-safety caps.
 - PR #15.
+- Approval ledger, approved-only starts, report stamping, and bounded YAML: PR #16.
 
 ## Next
 
