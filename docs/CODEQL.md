@@ -13,3 +13,7 @@ record. Production code remains scanned.
 
 If a new test adds a similar loopback request, dismiss the resulting alert with
 the same reason and update this note if the rationale changes.
+
+The same pattern in `caller_llm_api.rs` and `voice_api.rs` was reported on
+`refs/pull/6/head` as alerts 4-7 and dismissed as **used in tests** for the same
+reason.
