@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use axum::routing::post;
 use axum::{Json, Router};
 use callcraft_server::providers::config_from_request;
-use callcraft_server::{VoiceConfig, start_with_adapters};
+use callcraft_server::speech::SpeechConfig;
+use callcraft_server::start_with_adapters;
 use serde_json::{Value, json};
 
 fn root() -> PathBuf {
@@ -79,7 +80,7 @@ fn start_with_mock(chat_port: u16) -> (u16, String) {
         None,
     )
     .expect("caller config");
-    let (port, _handle) = start_with_adapters(0, token.clone(), VoiceConfig::default(), caller)
+    let (port, _handle) = start_with_adapters(0, token.clone(), SpeechConfig::default(), caller)
         .expect("server starts");
     (port, token)
 }

@@ -6,6 +6,7 @@
 
 mod caller_llm;
 pub mod providers;
+pub mod speech;
 
 pub use providers::CallerConfig;
 
@@ -23,7 +24,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use base64::Engine;
-use reqwest::multipart;
 
 use callcraft_core::report;
 use callcraft_core::scenario::Scenario;
@@ -44,7 +44,7 @@ const MAX_SESSIONS: usize = 64;
 struct AppState {
     token: Arc<String>,
     sessions: Arc<Mutex<HashMap<String, StoredSession>>>,
-    voice: VoiceConfig,
+    speech: Arc<Mutex<speech::SpeechConfig>>,
     caller: Arc<Mutex<CallerConfig>>,
     settings: providers::SettingsStore,
     http: reqwest::Client,
@@ -58,59 +58,6 @@ struct StoredSession {
     finished: bool,
 }
 
-/// Out-of-process voice adapters. Providers are commodity HTTP endpoints; the
-/// core never embeds a speech or model runtime. Empty URLs disable a direction.
-#[derive(Debug, Clone)]
-pub struct VoiceConfig {
-    pub stt_url: Option<String>,
-    pub stt_model: String,
-    pub stt_language: Option<String>,
-    pub tts_url: Option<String>,
-    pub tts_model: String,
-    pub tts_voice: String,
-    pub adapter_token: Option<String>,
-}
-
-impl Default for VoiceConfig {
-    fn default() -> Self {
-        Self {
-            stt_url: None,
-            stt_model: "whisper-1".to_string(),
-            stt_language: Some("en".to_string()),
-            tts_url: None,
-            tts_model: "tts-1".to_string(),
-            tts_voice: "default".to_string(),
-            adapter_token: None,
-        }
-    }
-}
-
-impl VoiceConfig {
-    pub fn from_env() -> Self {
-        Self {
-            stt_url: env_url("CALLCRAFT_STT_URL"),
-            stt_model: env_string("CALLCRAFT_STT_MODEL").unwrap_or_else(|| "whisper-1".to_string()),
-            stt_language: env_string("CALLCRAFT_STT_LANGUAGE").or_else(|| Some("en".to_string())),
-            tts_url: env_url("CALLCRAFT_TTS_URL"),
-            tts_model: env_string("CALLCRAFT_TTS_MODEL").unwrap_or_else(|| "tts-1".to_string()),
-            tts_voice: env_string("CALLCRAFT_TTS_VOICE").unwrap_or_else(|| "default".to_string()),
-            adapter_token: env_string("CALLCRAFT_ADAPTER_TOKEN"),
-        }
-    }
-}
-
-fn env_url(key: &str) -> Option<String> {
-    env_string(key)
-        .map(|value| value.trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn env_string(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-}
-
 /// Start the loopback server on a background thread.
 ///
 /// Port 0 asks the OS for an ephemeral port. Returns the actual port and a
@@ -118,29 +65,30 @@ fn env_string(key: &str) -> Option<String> {
 pub fn start(port: u16, token: String) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     let settings = providers::SettingsStore::from_env();
     let caller = CallerConfig::load(&settings);
-    start_with_adapters_and_store(port, token, VoiceConfig::from_env(), caller, settings)
+    let speech = speech::SpeechConfig::load(&settings);
+    start_with_adapters_and_store(port, token, speech, caller, settings)
 }
 
 /// Start with explicit voice adapters and a deterministic caller.
 pub fn start_with_config(
     port: u16,
     token: String,
-    voice: VoiceConfig,
+    speech: speech::SpeechConfig,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
-    start_with_adapters(port, token, voice, CallerConfig::default())
+    start_with_adapters(port, token, speech, CallerConfig::default())
 }
 
-/// Start with explicit voice and caller adapter configuration.
+/// Start with explicit speech and caller adapter configuration.
 pub fn start_with_adapters(
     port: u16,
     token: String,
-    voice: VoiceConfig,
+    speech: speech::SpeechConfig,
     caller: CallerConfig,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     start_with_adapters_and_store(
         port,
         token,
-        voice,
+        speech,
         caller,
         providers::SettingsStore::from_env(),
     )
@@ -151,7 +99,7 @@ pub fn start_with_adapters(
 pub fn start_with_adapters_and_store(
     port: u16,
     token: String,
-    voice: VoiceConfig,
+    speech: speech::SpeechConfig,
     caller: CallerConfig,
     settings: providers::SettingsStore,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
@@ -165,7 +113,7 @@ pub fn start_with_adapters_and_store(
     let state = AppState {
         token: Arc::new(token),
         sessions: Arc::new(Mutex::new(HashMap::new())),
-        voice,
+        speech: Arc::new(Mutex::new(speech)),
         caller: Arc::new(Mutex::new(caller)),
         settings,
         http,
@@ -200,6 +148,10 @@ fn app(state: AppState) -> Router {
         .route("/api/providers/test", post(provider_test))
         .route("/api/providers/configure", post(provider_configure))
         .route("/api/providers/reset", post(provider_reset))
+        .route("/api/speech/providers", get(speech_providers))
+        .route("/api/speech/test", post(speech_test))
+        .route("/api/speech/configure", post(speech_configure))
+        .route("/api/speech/reset", post(speech_reset))
         .route("/api/scenario/parse", post(parse_scenario))
         .route("/api/scenario/validate", post(validate_scenario_json))
         .route("/api/scenario/render", post(render_scenario))
@@ -776,19 +728,17 @@ async fn voice_status(
     } else {
         "deterministic"
     };
+    let (stt, tts) = {
+        let speech = state.speech.lock().expect("speech lock");
+        (speech.stt.is_some(), speech.tts.is_some())
+    };
     Json(json!({
         "ok": true,
-        "stt": state.voice.stt_url.is_some(),
-        "tts": state.voice.tts_url.is_some(),
+        "stt": stt,
+        "tts": tts,
         "caller": caller_mode,
     }))
     .into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct SttResponse {
-    #[serde(default)]
-    text: String,
 }
 
 async fn voice_turn(
@@ -801,7 +751,8 @@ async fn voice_turn(
     if let Some(response) = auth_guard(&state, &headers, &query) {
         return response;
     }
-    let Some(stt_url) = state.voice.stt_url.clone() else {
+    let speech = state.speech.lock().expect("speech lock").clone();
+    let Some(stt_config) = speech.stt.clone() else {
         return error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "speech-to-text is not configured",
@@ -832,9 +783,9 @@ async fn voice_turn(
         }
     }
 
-    let transcript = match transcribe(&state.http, &state.voice, &stt_url, &mime, &body).await {
+    let transcript = match speech::transcribe(&state.http, &stt_config, &mime, &body).await {
         Ok(text) => text,
-        Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error),
+        Err(error) => return error_response(StatusCode::BAD_GATEWAY, error.message()),
     };
     let transcript = transcript.trim().to_string();
     if transcript.is_empty() {
@@ -854,15 +805,15 @@ async fn voice_turn(
         "caller_error": outcome.caller_error,
     });
 
-    if let Some(tts_url) = state.voice.tts_url.clone() {
-        match synthesize(&state.http, &state.voice, &tts_url, &outcome.caller).await {
+    if let Some(tts_config) = speech.tts.clone() {
+        match speech::synthesize(&state.http, &tts_config, &outcome.caller).await {
             Ok((audio, audio_mime)) => {
                 payload["audio_base64"] =
                     json!(base64::engine::general_purpose::STANDARD.encode(audio));
                 payload["audio_mime"] = json!(audio_mime);
             }
             Err(error) => {
-                payload["audio_error"] = json!(error);
+                payload["audio_error"] = json!(error.message());
             }
         }
     }
@@ -870,94 +821,298 @@ async fn voice_turn(
     Json(payload).into_response()
 }
 
-async fn transcribe(
-    client: &reqwest::Client,
-    config: &VoiceConfig,
-    base_url: &str,
-    mime: &str,
-    audio: &Bytes,
-) -> Result<String, String> {
-    let part = multipart::Part::bytes(audio.to_vec())
-        .file_name("turn.webm")
-        .mime_str(mime)
-        .map_err(|error| format!("audio part: {error}"))?;
-    let mut form = multipart::Form::new()
-        .part("file", part)
-        .text("model", config.stt_model.clone());
-    if let Some(language) = &config.stt_language {
-        form = form.text("language", language.clone());
-    }
-
-    let mut request = client
-        .post(format!("{base_url}/v1/audio/transcriptions"))
-        .multipart(form);
-    if let Some(token) = &config.adapter_token {
-        request = request.bearer_auth(token);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("speech-to-text request failed: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "speech-to-text returned {status}: {}",
-            snippet(&body)
-        ));
-    }
-    let payload: SttResponse = response
-        .json()
-        .await
-        .map_err(|error| format!("speech-to-text response: {error}"))?;
-    Ok(payload.text)
+#[derive(Debug, Deserialize)]
+struct SpeechPayload {
+    kind: speech::SpeechKind,
+    provider_id: String,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    voice: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
 }
 
-async fn synthesize(
-    client: &reqwest::Client,
-    config: &VoiceConfig,
-    base_url: &str,
-    text: &str,
-) -> Result<(Vec<u8>, String), String> {
-    let mut request = client
-        .post(format!("{base_url}/v1/audio/speech"))
-        .json(&json!({
-            "model": config.tts_model.clone(),
-            "input": text,
-            "voice": config.tts_voice.clone(),
-            "response_format": "wav",
-        }));
-    if let Some(token) = &config.adapter_token {
-        request = request.bearer_auth(token);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("text-to-speech request failed: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "text-to-speech returned {status}: {}",
-            snippet(&body)
-        ));
-    }
-    let mime = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("audio/wav")
-        .to_string();
-    let audio = response
-        .bytes()
-        .await
-        .map_err(|error| format!("text-to-speech body: {error}"))?
-        .to_vec();
-    Ok((audio, mime))
+#[derive(Debug, Deserialize)]
+struct SpeechResetPayload {
+    kind: speech::SpeechKind,
 }
 
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
+fn provided_speech_key(payload: &SpeechPayload) -> Option<String> {
+    payload
+        .api_key
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn speech_key(
+    state: &AppState,
+    kind: speech::SpeechKind,
+    provider_id: &str,
+    provided: Option<String>,
+) -> Option<String> {
+    let namespace = match kind {
+        speech::SpeechKind::Stt => "stt",
+        speech::SpeechKind::Tts => "tts",
+    };
+    provided
+        .or_else(|| state.settings.load_key_ns(namespace, provider_id))
+        .or_else(|| {
+            let speech = state.speech.lock().expect("speech lock");
+            match kind {
+                speech::SpeechKind::Stt => speech
+                    .stt
+                    .as_ref()
+                    .filter(|config| config.provider_id.as_deref() == Some(provider_id))
+                    .and_then(|config| config.api_key.clone()),
+                speech::SpeechKind::Tts => speech
+                    .tts
+                    .as_ref()
+                    .filter(|config| config.provider_id.as_deref() == Some(provider_id))
+                    .and_then(|config| config.api_key.clone()),
+            }
+        })
+}
+
+fn active_speech(state: &AppState) -> serde_json::Value {
+    let speech = state.speech.lock().expect("speech lock");
+    let stt = speech.stt.as_ref().map(|config| {
+        json!({
+            "provider_id": config.provider_id,
+            "base_url": config.base_url,
+            "model": config.model,
+            "language": config.language,
+            "api_key_set": config.api_key.as_deref().map(|key| !key.trim().is_empty()).unwrap_or(false),
+        })
+    });
+    let tts = speech.tts.as_ref().map(|config| {
+        json!({
+            "provider_id": config.provider_id,
+            "base_url": config.base_url,
+            "model": config.model,
+            "voice": config.voice,
+            "api_key_set": config.api_key.as_deref().map(|key| !key.trim().is_empty()).unwrap_or(false),
+        })
+    });
+    json!({"stt": stt, "tts": tts})
+}
+
+async fn speech_providers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    Json(json!({
+        "ok": true,
+        "stt": speech::STT_PROVIDERS,
+        "tts": speech::TTS_PROVIDERS,
+        "active": active_speech(&state),
+        "keyring": state.settings.keyring_enabled(),
+    }))
+    .into_response()
+}
+
+async fn speech_test(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<SpeechPayload>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    let provided = provided_speech_key(&payload);
+    let api_key = speech_key(&state, payload.kind, &payload.provider_id, provided);
+    let started = Instant::now();
+
+    match payload.kind {
+        speech::SpeechKind::Stt => {
+            let config = match speech::stt_from_request(
+                &payload.provider_id,
+                payload.base_url.clone(),
+                payload.model.clone(),
+                payload.language.clone(),
+                api_key,
+            ) {
+                Ok(config) => config,
+                Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+            };
+            match speech::transcribe(&state.http, &config, "audio/wav", speech::STT_TEST_WAV).await
+            {
+                Ok(transcript) => Json(json!({
+                    "ok": true,
+                    "kind": "stt",
+                    "provider_id": config.provider_id,
+                    "model": config.model,
+                    "latency_ms": started.elapsed().as_millis(),
+                    "transcript": transcript,
+                }))
+                .into_response(),
+                Err(error) => Json(json!({
+                    "ok": false,
+                    "kind": "stt",
+                    "error": error.message(),
+                    "latency_ms": started.elapsed().as_millis(),
+                }))
+                .into_response(),
+            }
+        }
+        speech::SpeechKind::Tts => {
+            let config = match speech::tts_from_request(
+                &payload.provider_id,
+                payload.base_url.clone(),
+                payload.model.clone(),
+                payload.voice.clone(),
+                api_key,
+            ) {
+                Ok(config) => config,
+                Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+            };
+            match speech::synthesize(&state.http, &config, "Callcraft voice connection test.").await
+            {
+                Ok((audio, mime)) => Json(json!({
+                    "ok": true,
+                    "kind": "tts",
+                    "provider_id": config.provider_id,
+                    "model": config.model,
+                    "voice": config.voice,
+                    "latency_ms": started.elapsed().as_millis(),
+                    "bytes": audio.len(),
+                    "audio_mime": mime,
+                    "audio_base64": base64::engine::general_purpose::STANDARD.encode(audio),
+                }))
+                .into_response(),
+                Err(error) => Json(json!({
+                    "ok": false,
+                    "kind": "tts",
+                    "error": error.message(),
+                    "latency_ms": started.elapsed().as_millis(),
+                }))
+                .into_response(),
+            }
+        }
+    }
+}
+
+async fn speech_configure(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<SpeechPayload>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    let provided = provided_speech_key(&payload);
+    let api_key = speech_key(&state, payload.kind, &payload.provider_id, provided.clone());
+    let mut stored = state.settings.load_speech().unwrap_or_default();
+
+    let namespace = match payload.kind {
+        speech::SpeechKind::Stt => "stt",
+        speech::SpeechKind::Tts => "tts",
+    };
+    if let Some(key) = provided.as_deref()
+        && let Err(error) = state
+            .settings
+            .save_key_ns(namespace, &payload.provider_id, key)
+    {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+
+    match payload.kind {
+        speech::SpeechKind::Stt => {
+            let config = match speech::stt_from_request(
+                &payload.provider_id,
+                payload.base_url.clone(),
+                payload.model.clone(),
+                payload.language.clone(),
+                api_key,
+            ) {
+                Ok(config) => config,
+                Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+            };
+            stored.stt = Some(providers::StoredStt {
+                provider_id: payload.provider_id.clone(),
+                base_url: config.base_url.clone(),
+                model: config.model.clone(),
+                language: config.language.clone().unwrap_or_default(),
+            });
+            let mut speech = state.speech.lock().expect("speech lock");
+            speech.stt = Some(config);
+        }
+        speech::SpeechKind::Tts => {
+            let config = match speech::tts_from_request(
+                &payload.provider_id,
+                payload.base_url.clone(),
+                payload.model.clone(),
+                payload.voice.clone(),
+                api_key,
+            ) {
+                Ok(config) => config,
+                Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+            };
+            stored.tts = Some(providers::StoredTts {
+                provider_id: payload.provider_id.clone(),
+                base_url: config.base_url.clone(),
+                model: config.model.clone(),
+                voice: config.voice.clone().unwrap_or_default(),
+            });
+            let mut speech = state.speech.lock().expect("speech lock");
+            speech.tts = Some(config);
+        }
+    }
+
+    if let Err(error) = state.settings.save_speech(&stored) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+    Json(json!({
+        "ok": true,
+        "active": active_speech(&state),
+    }))
+    .into_response()
+}
+
+async fn speech_reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<SpeechResetPayload>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    let mut stored = state.settings.load_speech().unwrap_or_default();
+    match payload.kind {
+        speech::SpeechKind::Stt => {
+            stored.stt = None;
+            state.speech.lock().expect("speech lock").stt = None;
+        }
+        speech::SpeechKind::Tts => {
+            stored.tts = None;
+            state.speech.lock().expect("speech lock").tts = None;
+        }
+    }
+    let result = if stored.stt.is_none() && stored.tts.is_none() {
+        state.settings.clear_speech()
+    } else {
+        state.settings.save_speech(&stored)
+    };
+    if let Err(error) = result {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
+    }
+    Json(json!({
+        "ok": true,
+        "active": active_speech(&state),
+    }))
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]

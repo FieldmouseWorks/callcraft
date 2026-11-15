@@ -468,3 +468,11 @@ button.danger {
   .anchor-row { grid-template-columns: 1fr; }
 }
 
+
+.settings-heading {
+  margin: 24px 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}

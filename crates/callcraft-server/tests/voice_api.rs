@@ -5,7 +5,8 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use base64::Engine;
-use callcraft_server::{VoiceConfig, start_with_config};
+use callcraft_server::speech::{SpeechConfig, stt_from_request, tts_from_request};
+use callcraft_server::start_with_config;
 use serde_json::{Value, json};
 
 fn root() -> PathBuf {
@@ -66,12 +67,29 @@ fn voice_turn_uses_stt_and_tts() {
     let tts_port = spawn(Router::new().route("/v1/audio/speech", post(mock_tts)));
 
     let token = "test-token";
-    let voice = VoiceConfig {
-        stt_url: Some(format!("http://127.0.0.1:{stt_port}")),
-        tts_url: Some(format!("http://127.0.0.1:{tts_port}")),
-        ..VoiceConfig::default()
+    let speech = SpeechConfig {
+        stt: Some(
+            stt_from_request(
+                "openai-compatible",
+                Some(format!("http://127.0.0.1:{stt_port}")),
+                Some("whisper-1".to_string()),
+                Some("en".to_string()),
+                None,
+            )
+            .expect("stt config"),
+        ),
+        tts: Some(
+            tts_from_request(
+                "openai-compatible",
+                Some(format!("http://127.0.0.1:{tts_port}")),
+                Some("tts-1".to_string()),
+                Some("alloy".to_string()),
+                None,
+            )
+            .expect("tts config"),
+        ),
     };
-    let (port, _handle) = start_with_config(0, token.to_string(), voice).expect("server starts");
+    let (port, _handle) = start_with_config(0, token.to_string(), speech).expect("server starts");
     let base = format!("http://127.0.0.1:{port}");
     let client = reqwest::blocking::Client::new();
 
@@ -110,7 +128,7 @@ fn voice_turn_uses_stt_and_tts() {
 fn voice_turn_requires_configuration() {
     let token = "test-token";
     let (port, _handle) =
-        start_with_config(0, token.to_string(), VoiceConfig::default()).expect("server starts");
+        start_with_config(0, token.to_string(), SpeechConfig::default()).expect("server starts");
     let base = format!("http://127.0.0.1:{port}");
     let client = reqwest::blocking::Client::new();
 

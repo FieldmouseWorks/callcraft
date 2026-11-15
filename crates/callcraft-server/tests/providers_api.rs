@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use axum::routing::post;
 use axum::{Json, Router};
 use callcraft_server::providers::SettingsStore;
-use callcraft_server::{CallerConfig, VoiceConfig, start_with_adapters_and_store};
+use callcraft_server::speech::SpeechConfig;
+use callcraft_server::{CallerConfig, start_with_adapters_and_store};
 use serde_json::{Value, json};
 
 fn root() -> PathBuf {
@@ -57,7 +58,7 @@ fn start_server(token: &str, store: SettingsStore) -> (u16, std::thread::JoinHan
     start_with_adapters_and_store(
         0,
         token.to_string(),
-        VoiceConfig::default(),
+        SpeechConfig::default(),
         CallerConfig::default(),
         store,
     )

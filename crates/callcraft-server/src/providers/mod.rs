@@ -304,6 +304,36 @@ pub struct StoredConfig {
     pub model: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredStt {
+    pub provider_id: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub language: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredTts {
+    pub provider_id: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub voice: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StoredSpeech {
+    #[serde(default)]
+    pub stt: Option<StoredStt>,
+    #[serde(default)]
+    pub tts: Option<StoredTts>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SettingsStore {
     config_path: PathBuf,
@@ -339,21 +369,30 @@ impl SettingsStore {
         }
         let text = serde_json::to_string_pretty(config)
             .map_err(|error| format!("config serialize: {error}"))?;
-        let temp_path = self.config_path.with_extension("json.tmp");
-        fs::write(&temp_path, format!("{text}\n"))
-            .map_err(|error| format!("config write: {error}"))?;
-        set_private_permissions(&temp_path)?;
-        fs::rename(&temp_path, &self.config_path)
-            .map_err(|error| format!("config replace: {error}"))?;
-        Ok(())
+        write_private(&self.config_path, &text)
+    }
+
+    pub fn load_speech(&self) -> Option<StoredSpeech> {
+        let text = fs::read_to_string(self.speech_path()).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    pub fn save_speech(&self, speech: &StoredSpeech) -> Result<(), String> {
+        let text = serde_json::to_string_pretty(speech)
+            .map_err(|error| format!("speech config serialize: {error}"))?;
+        write_private(&self.speech_path(), &text)
+    }
+
+    pub fn clear_speech(&self) -> Result<(), String> {
+        remove_if_exists(&self.speech_path())
+    }
+
+    fn speech_path(&self) -> PathBuf {
+        self.config_path.with_file_name("speech.json")
     }
 
     pub fn clear(&self) -> Result<(), String> {
-        match fs::remove_file(&self.config_path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(format!("config remove: {error}")),
-        }
+        remove_if_exists(&self.config_path)
     }
 
     pub fn keyring_enabled(&self) -> bool {
@@ -361,35 +400,73 @@ impl SettingsStore {
     }
 
     pub fn load_key(&self, provider_id: &str) -> Option<String> {
-        if !self.keyring_enabled {
-            return None;
-        }
-        keyring_entry(provider_id).ok()?.get_password().ok()
+        self.load_key_ns("provider", provider_id)
     }
 
     pub fn save_key(&self, provider_id: &str, api_key: &str) -> Result<(), String> {
+        self.save_key_ns("provider", provider_id, api_key)
+    }
+
+    pub fn delete_key(&self, provider_id: &str) {
+        self.delete_key_ns("provider", provider_id);
+    }
+
+    pub fn load_key_ns(&self, namespace: &str, provider_id: &str) -> Option<String> {
+        if !self.keyring_enabled {
+            return None;
+        }
+        keyring_entry(namespace, provider_id)
+            .ok()?
+            .get_password()
+            .ok()
+    }
+
+    pub fn save_key_ns(
+        &self,
+        namespace: &str,
+        provider_id: &str,
+        api_key: &str,
+    ) -> Result<(), String> {
         if !self.keyring_enabled {
             return Err("OS keychain is unavailable or disabled".to_string());
         }
-        keyring_entry(provider_id)?
+        keyring_entry(namespace, provider_id)?
             .set_password(api_key)
             .map_err(|error| format!("keychain: {error}"))
     }
 
-    pub fn delete_key(&self, provider_id: &str) {
+    pub fn delete_key_ns(&self, namespace: &str, provider_id: &str) {
         if !self.keyring_enabled {
             return;
         }
-        if let Ok(entry) = keyring_entry(provider_id) {
+        if let Ok(entry) = keyring_entry(namespace, provider_id) {
             let _ = entry.delete_credential();
         }
     }
 }
 
-fn keyring_entry(provider_id: &str) -> Result<keyring_core::Entry, String> {
+fn keyring_entry(namespace: &str, provider_id: &str) -> Result<keyring_core::Entry, String> {
     init_keyring();
-    keyring_core::Entry::new("callcraft", &format!("provider:{provider_id}"))
+    keyring_core::Entry::new("callcraft", &format!("{namespace}:{provider_id}"))
         .map_err(|error| format!("keychain: {error}"))
+}
+
+fn write_private(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("config directory: {error}"))?;
+    }
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, format!("{text}\n")).map_err(|error| format!("config write: {error}"))?;
+    set_private_permissions(&temp_path)?;
+    fs::rename(&temp_path, path).map_err(|error| format!("config replace: {error}"))
+}
+
+fn remove_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("config remove: {error}")),
+    }
 }
 
 fn init_keyring() {

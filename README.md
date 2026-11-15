@@ -61,8 +61,10 @@ form edits that model, and the server validates then serializes it back.
 
 ## Voice
 
-Voice is I/O around the same deterministic caller. Configure out-of-process
-STT and TTS adapters; unset means text-only:
+Voice is I/O around the same deterministic caller. STT and TTS each have a
+provider registry: OpenAI-compatible endpoints, OpenAI, whisper.cpp, ElevenLabs,
+Deepgram, and Piper via an OpenAI-compatible shim. The Settings tab configures
+and tests each direction; unset means text-only.
 
 ```bash
 CALLCRAFT_STT_URL=http://127.0.0.1:8080 \
@@ -72,7 +74,8 @@ cargo run -p callcraft-cli -- serve
 ```
 
 Contracts, provider notes, and privacy rules:
-[docs/VOICE-ADAPTERS.md](docs/VOICE-ADAPTERS.md). The LLM caller selects
+[docs/VOICE-ADAPTERS.md](docs/VOICE-ADAPTERS.md) and
+[docs/SPEECH-PROVIDERS.md](docs/SPEECH-PROVIDERS.md). The LLM caller selects
 authored fact ids only; the server renders the words:
 [docs/LLM-CALLER.md](docs/LLM-CALLER.md).
 
@@ -145,10 +148,10 @@ PILOT-30-DAY.md    pilot plan and success criteria
 ## Status
 
 v0.1 — text and voice turns, deterministic caller with optional LLM
-decisioning, provider registry with keychain-backed settings, checklist
-scoring, JSON reports, byte-identical replay, session API, runner UI,
-structured authoring UI, and a Tauri shell scaffold. Not built yet: native file
-dialog, auth beyond the per-launch token. The 30-day pilot criteria in
+decisioning, caller and speech provider registries with keychain-backed
+settings, checklist scoring, JSON reports, byte-identical replay, session API,
+runner UI, structured authoring UI, and a Tauri shell scaffold. Not built yet:
+native file dialog, auth beyond the per-launch token. The 30-day pilot criteria in
 [PILOT-30-DAY.md](PILOT-30-DAY.md) decide whether any of that gets built.
 
 Dependency and release rules: [docs/DEPENDENCY-POLICY.md](docs/DEPENDENCY-POLICY.md).

@@ -16,6 +16,11 @@ repository.
   [LLM-CALLER.md](LLM-CALLER.md).
 - Audio is forwarded, never written to disk, and never stored in the report.
 
+## Provider registry
+
+The STT and TTS provider registries, authentication, storage, and connection
+tests are documented in [SPEECH-PROVIDERS.md](SPEECH-PROVIDERS.md).
+
 ## Contracts
 
 ### Speech-to-text

@@ -84,6 +84,70 @@
         </div>
         <pre id="provider-output" class="output" aria-live="polite"></pre>
         <p class="meta">API keys are stored in the OS keychain. Anthropic consumer subscription OAuth is not available to third-party apps; use an API key. OpenAI Sign in with ChatGPT plan usage is partner-gated.</p>
+
+        <h3 class="settings-heading">Speech-to-text</h3>
+        <div class="grid">
+          <label class="field">
+            <span class="field-label">Provider</span>
+            <select id="stt-provider" class="input"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Base URL</span>
+            <input id="stt-url" class="input" type="text" placeholder="https://...">
+          </label>
+          <label class="field">
+            <span class="field-label">Model</span>
+            <input id="stt-model" class="input" type="text" placeholder="whisper-1">
+          </label>
+          <label class="field">
+            <span class="field-label">Language</span>
+            <input id="stt-language" class="input" type="text" placeholder="en">
+          </label>
+          <label class="field">
+            <span class="field-label">API key</span>
+            <input id="stt-key" class="input" type="password" placeholder="stored in OS keychain">
+          </label>
+        </div>
+        <p id="stt-note" class="meta"></p>
+        <div class="row">
+          <button id="stt-test" class="secondary" type="button">Test transcription</button>
+          <button id="stt-save" class="primary" type="button">Save STT</button>
+          <button id="stt-reset" class="secondary" type="button">Clear STT</button>
+          <span id="stt-status" class="meta"></span>
+        </div>
+        <pre id="stt-output" class="output" aria-live="polite"></pre>
+
+        <h3 class="settings-heading">Text-to-speech</h3>
+        <div class="grid">
+          <label class="field">
+            <span class="field-label">Provider</span>
+            <select id="tts-provider" class="input"></select>
+          </label>
+          <label class="field">
+            <span class="field-label">Base URL</span>
+            <input id="tts-url" class="input" type="text" placeholder="https://...">
+          </label>
+          <label class="field">
+            <span class="field-label">Model</span>
+            <input id="tts-model" class="input" type="text" placeholder="tts-1">
+          </label>
+          <label class="field">
+            <span class="field-label">Voice</span>
+            <input id="tts-voice" class="input" type="text" placeholder="alloy or voice id">
+          </label>
+          <label class="field">
+            <span class="field-label">API key</span>
+            <input id="tts-key" class="input" type="password" placeholder="stored in OS keychain">
+          </label>
+        </div>
+        <p id="tts-note" class="meta"></p>
+        <div class="row">
+          <button id="tts-test" class="secondary" type="button">Test speech</button>
+          <button id="tts-save" class="primary" type="button">Save TTS</button>
+          <button id="tts-reset" class="secondary" type="button">Clear TTS</button>
+          <span id="tts-status" class="meta"></span>
+        </div>
+        <pre id="tts-output" class="output" aria-live="polite"></pre>
       </div>
 
       <details class="diagnostics">
