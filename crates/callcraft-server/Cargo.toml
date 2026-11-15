@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+publish = false
 description = "Loopback HTTP API and static UI hosting for Callcraft"
 
 [dependencies]
