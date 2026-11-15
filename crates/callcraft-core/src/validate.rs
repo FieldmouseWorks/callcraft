@@ -114,23 +114,23 @@ fn semantic_errors(scenario: &Scenario) -> Vec<String> {
         }
         if let Some(anchors) = &item.anchors {
             for anchor in anchors.all() {
-                if let Some(pattern) = &anchor.transcript_regex {
-                    if let Err(err) = Regex::new(pattern) {
-                        problems.push(format!(
-                            "rubric item '{}': invalid transcript_regex: {err}",
-                            item.id
-                        ));
-                    }
+                if let Some(pattern) = &anchor.transcript_regex
+                    && let Err(err) = Regex::new(pattern)
+                {
+                    problems.push(format!(
+                        "rubric item '{}': invalid transcript_regex: {err}",
+                        item.id
+                    ));
                 }
                 if let Some(pair) = &anchor.utterance_pair {
                     let reference = pair.first().map(String::as_str).unwrap_or_default();
-                    if let Some(fact_id) = reference.strip_prefix("caller_") {
-                        if !fact_ids.contains(fact_id) {
-                            problems.push(format!(
-                                "rubric item '{}': utterance_pair references unknown fact '{fact_id}'",
-                                item.id
-                            ));
-                        }
+                    if let Some(fact_id) = reference.strip_prefix("caller_")
+                        && !fact_ids.contains(fact_id)
+                    {
+                        problems.push(format!(
+                            "rubric item '{}': utterance_pair references unknown fact '{fact_id}'",
+                            item.id
+                        ));
                     }
                 }
             }

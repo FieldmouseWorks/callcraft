@@ -141,13 +141,13 @@ pub fn run_scripted(
     script: &Script,
     started_at: String,
 ) -> Result<Session, SessionError> {
-    if let Some(target) = &script.scenario {
-        if target != &scenario.id {
-            return Err(SessionError::WrongScenario {
-                script: target.clone(),
-                scenario: scenario.id.clone(),
-            });
-        }
+    if let Some(target) = &script.scenario
+        && target != &scenario.id
+    {
+        return Err(SessionError::WrongScenario {
+            script: target.clone(),
+            scenario: scenario.id.clone(),
+        });
     }
 
     let mut session = Session::new(scenario, "scripted", started_at);
