@@ -9,8 +9,10 @@ description = "Loopback HTTP API and static UI hosting for Callcraft"
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 axum.workspace = true
 callcraft-core = { path = "../callcraft-core" }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true

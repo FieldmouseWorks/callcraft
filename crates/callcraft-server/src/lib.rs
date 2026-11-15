@@ -8,13 +8,17 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Path, Query, State};
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+use base64::Engine;
+use reqwest::multipart;
 
 use callcraft_core::report;
 use callcraft_core::scenario::Scenario;
@@ -34,6 +38,7 @@ const MAX_SESSIONS: usize = 64;
 struct AppState {
     token: Arc<String>,
     sessions: Arc<Mutex<HashMap<String, StoredSession>>>,
+    voice: VoiceConfig,
 }
 
 struct StoredSession {
@@ -44,17 +49,81 @@ struct StoredSession {
     finished: bool,
 }
 
+/// Out-of-process voice adapters. Providers are commodity HTTP endpoints; the
+/// core never embeds a speech or model runtime. Empty URLs disable a direction.
+#[derive(Debug, Clone)]
+pub struct VoiceConfig {
+    pub stt_url: Option<String>,
+    pub stt_model: String,
+    pub stt_language: Option<String>,
+    pub tts_url: Option<String>,
+    pub tts_model: String,
+    pub tts_voice: String,
+    pub adapter_token: Option<String>,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            stt_url: None,
+            stt_model: "whisper-1".to_string(),
+            stt_language: Some("en".to_string()),
+            tts_url: None,
+            tts_model: "tts-1".to_string(),
+            tts_voice: "default".to_string(),
+            adapter_token: None,
+        }
+    }
+}
+
+impl VoiceConfig {
+    pub fn from_env() -> Self {
+        Self {
+            stt_url: env_url("CALLCRAFT_STT_URL"),
+            stt_model: env_string("CALLCRAFT_STT_MODEL").unwrap_or_else(|| "whisper-1".to_string()),
+            stt_language: env_string("CALLCRAFT_STT_LANGUAGE").or_else(|| Some("en".to_string())),
+            tts_url: env_url("CALLCRAFT_TTS_URL"),
+            tts_model: env_string("CALLCRAFT_TTS_MODEL").unwrap_or_else(|| "tts-1".to_string()),
+            tts_voice: env_string("CALLCRAFT_TTS_VOICE").unwrap_or_else(|| "default".to_string()),
+            adapter_token: env_string("CALLCRAFT_ADAPTER_TOKEN"),
+        }
+    }
+}
+
+fn env_url(key: &str) -> Option<String> {
+    env_string(key)
+        .map(|value| value.trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_string(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
 /// Start the loopback server on a background thread.
 ///
 /// Port 0 asks the OS for an ephemeral port. Returns the actual port and a
 /// join handle; the caller decides how long to keep it alive.
 pub fn start(port: u16, token: String) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
+    start_with_config(port, token, VoiceConfig::from_env())
+}
+
+/// Start with explicit adapter configuration. Tests and the desktop shell use
+/// this so environment variables never leak between runs.
+pub fn start_with_config(
+    port: u16,
+    token: String,
+    voice: VoiceConfig,
+) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
     listener.set_nonblocking(true)?;
     let actual_port = listener.local_addr()?.port();
     let state = AppState {
         token: Arc::new(token),
         sessions: Arc::new(Mutex::new(HashMap::new())),
+        voice,
     };
 
     let handle = std::thread::spawn(move || {
@@ -80,6 +149,7 @@ fn app(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/example", get(example))
         .route("/api/validate", post(validate))
+        .route("/api/voice/status", get(voice_status))
         .route("/api/scenario/parse", post(parse_scenario))
         .route("/api/scenario/validate", post(validate_scenario_json))
         .route("/api/scenario/render", post(render_scenario))
@@ -91,6 +161,8 @@ fn app(state: AppState) -> Router {
         .route("/api/sessions/{id}/turns", post(turn))
         .route("/api/sessions/{id}/events", post(event))
         .route("/api/sessions/{id}/finish", post(finish))
+        .route("/api/sessions/{id}/voice-turn", post(voice_turn))
+        .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -402,6 +474,22 @@ async fn delete_session(
     Json(json!({"ok": true})).into_response()
 }
 
+fn apply_turn(stored: &mut StoredSession, text: &str) -> String {
+    let t_ms = stored.started.elapsed().as_millis() as u64;
+    stored
+        .session
+        .add_utterance(Speaker::Trainee, text.to_string(), t_ms, Vec::new());
+    let reply = stored.engine.respond(text, t_ms as f64 / 1000.0);
+    let caller = reply.text.clone();
+    stored.session.add_utterance(
+        Speaker::Caller,
+        reply.text,
+        t_ms.saturating_add(1),
+        reply.disclosed,
+    );
+    caller
+}
+
 async fn turn(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -425,23 +513,13 @@ async fn turn(
         return error_response(StatusCode::CONFLICT, "session is finished");
     }
 
-    let t_ms = stored.started.elapsed().as_millis() as u64;
-    stored
-        .session
-        .add_utterance(Speaker::Trainee, text.to_string(), t_ms, Vec::new());
-    let reply = stored.engine.respond(text, t_ms as f64 / 1000.0);
-    stored.session.add_utterance(
-        Speaker::Caller,
-        reply.text.clone(),
-        t_ms.saturating_add(1),
-        reply.disclosed,
-    );
+    let caller = apply_turn(stored, text);
 
     let transcript: Vec<&Utterance> = stored.session.transcript().collect();
     let events: Vec<&str> = stored.session.events().collect();
     Json(json!({
         "ok": true,
-        "caller": reply.text,
+        "caller": caller,
         "transcript": transcript,
         "events": events,
     }))
@@ -498,6 +576,214 @@ async fn finish(
     let report: Report = report::build(&stored.scenario, &stored.session, evaluation, &log);
 
     Json(json!({"ok": true, "report": report})).into_response()
+}
+
+async fn voice_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    Json(json!({
+        "ok": true,
+        "stt": state.voice.stt_url.is_some(),
+        "tts": state.voice.tts_url.is_some(),
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct SttResponse {
+    #[serde(default)]
+    text: String,
+}
+
+async fn voice_turn(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    body: Bytes,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    let Some(stt_url) = state.voice.stt_url.clone() else {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "speech-to-text is not configured",
+        );
+    };
+    if body.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "empty audio body");
+    }
+    let mime = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("audio/webm")
+        .to_string();
+    if !mime.starts_with("audio/") {
+        return error_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "audio content type required",
+        );
+    }
+
+    {
+        let sessions = state.sessions.lock().expect("sessions lock");
+        let Some(stored) = sessions.get(&id) else {
+            return error_response(StatusCode::NOT_FOUND, "session not found");
+        };
+        if stored.finished {
+            return error_response(StatusCode::CONFLICT, "session is finished");
+        }
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("http client: {error}"),
+            );
+        }
+    };
+
+    let transcript = match transcribe(&client, &state.voice, &stt_url, &mime, &body).await {
+        Ok(text) => text,
+        Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error),
+    };
+    let transcript = transcript.trim().to_string();
+    if transcript.is_empty() {
+        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "no speech detected");
+    }
+
+    let caller = {
+        let mut sessions = state.sessions.lock().expect("sessions lock");
+        let Some(stored) = sessions.get_mut(&id) else {
+            return error_response(StatusCode::NOT_FOUND, "session not found");
+        };
+        if stored.finished {
+            return error_response(StatusCode::CONFLICT, "session is finished");
+        }
+        apply_turn(stored, &transcript)
+    };
+
+    let mut payload = json!({
+        "ok": true,
+        "transcript": transcript,
+        "caller": caller.clone(),
+    });
+
+    if let Some(tts_url) = state.voice.tts_url.clone() {
+        match synthesize(&client, &state.voice, &tts_url, &caller).await {
+            Ok((audio, audio_mime)) => {
+                payload["audio_base64"] =
+                    json!(base64::engine::general_purpose::STANDARD.encode(audio));
+                payload["audio_mime"] = json!(audio_mime);
+            }
+            Err(error) => {
+                payload["audio_error"] = json!(error);
+            }
+        }
+    }
+
+    Json(payload).into_response()
+}
+
+async fn transcribe(
+    client: &reqwest::Client,
+    config: &VoiceConfig,
+    base_url: &str,
+    mime: &str,
+    audio: &Bytes,
+) -> Result<String, String> {
+    let part = multipart::Part::bytes(audio.to_vec())
+        .file_name("turn.webm")
+        .mime_str(mime)
+        .map_err(|error| format!("audio part: {error}"))?;
+    let mut form = multipart::Form::new()
+        .part("file", part)
+        .text("model", config.stt_model.clone());
+    if let Some(language) = &config.stt_language {
+        form = form.text("language", language.clone());
+    }
+
+    let mut request = client
+        .post(format!("{base_url}/v1/audio/transcriptions"))
+        .multipart(form);
+    if let Some(token) = &config.adapter_token {
+        request = request.bearer_auth(token);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("speech-to-text request failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "speech-to-text returned {status}: {}",
+            snippet(&body)
+        ));
+    }
+    let payload: SttResponse = response
+        .json()
+        .await
+        .map_err(|error| format!("speech-to-text response: {error}"))?;
+    Ok(payload.text)
+}
+
+async fn synthesize(
+    client: &reqwest::Client,
+    config: &VoiceConfig,
+    base_url: &str,
+    text: &str,
+) -> Result<(Vec<u8>, String), String> {
+    let mut request = client
+        .post(format!("{base_url}/v1/audio/speech"))
+        .json(&json!({
+            "model": config.tts_model.clone(),
+            "input": text,
+            "voice": config.tts_voice.clone(),
+            "response_format": "wav",
+        }));
+    if let Some(token) = &config.adapter_token {
+        request = request.bearer_auth(token);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("text-to-speech request failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "text-to-speech returned {status}: {}",
+            snippet(&body)
+        ));
+    }
+    let mime = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("audio/wav")
+        .to_string();
+    let audio = response
+        .bytes()
+        .await
+        .map_err(|error| format!("text-to-speech body: {error}"))?
+        .to_vec();
+    Ok((audio, mime))
+}
+
+fn snippet(text: &str) -> String {
+    text.chars().take(200).collect()
 }
 
 fn now_iso() -> String {

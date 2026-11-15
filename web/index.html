@@ -74,6 +74,11 @@
         <input id="turn-input" type="text" placeholder="Trainee response..." autocomplete="off">
         <button id="send" class="primary" type="button">Send</button>
       </div>
+      <div class="voice-row">
+        <button id="record" class="secondary" type="button" disabled>Record turn</button>
+        <span id="voice-meta" class="meta">Voice not checked</span>
+        <audio id="caller-audio" class="caller-audio" hidden></audio>
+      </div>
       <div class="row">
         <button id="finish" class="primary" type="button">Finish &amp; score</button>
         <button id="download" class="secondary" type="button" disabled>Download report</button>
