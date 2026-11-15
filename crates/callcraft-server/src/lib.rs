@@ -205,6 +205,19 @@ fn app(state: AppState) -> Router {
             "/api/packs/{pack_id}/scenarios/{scenario_id}",
             get(handlers::packs::open_scenario),
         )
+        .route(
+            "/api/packs/{pack_id}/export",
+            post(handlers::packs::export_pack),
+        )
+        .route(
+            "/api/packs/import/inspect",
+            post(handlers::packs::inspect_import),
+        )
+        .route("/api/packs/import", post(handlers::packs::import_pack))
+        .route(
+            "/api/packs/{pack_id}/rollback",
+            post(handlers::packs::rollback_pack),
+        )
         .route("/api/sessions", post(handlers::sessions::create_session))
         .route(
             "/api/sessions/{id}",

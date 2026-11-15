@@ -70,7 +70,9 @@ form edits that model, and the server validates then serializes it back.
 A pack is a local directory of agency-owned scenarios under the OS local-data
 directory. It is never committed to the repo and never uploaded by the app.
 `Save to pack` creates the default `local` pack on first use; the Prepare
-library lists saved scenarios and starts them by pack id. Validate a pack with:
+library lists saved scenarios and starts them by pack id. Export creates a
+checksummed zip; import inspects it first, then installs or replaces with a
+backup and rollback. Validate a pack with:
 
 ```bash
 cargo run -p callcraft-cli -- pack validate <pack-dir>

@@ -127,3 +127,89 @@ fn pack_api_rejects_invalid_scenario_and_unknown_pack() {
         .expect("unknown pack start");
     assert_eq!(unknown.status(), reqwest::StatusCode::BAD_REQUEST);
 }
+
+#[test]
+fn pack_export_and_import_round_trip_through_the_api() {
+    let dir_a = tempfile::tempdir().expect("tempdir a");
+    let (port_a, _handle_a) = start_with_adapters_store_and_packs(
+        0,
+        "test-token".to_string(),
+        SpeechConfig::default(),
+        CallerConfig::default(),
+        SettingsStore::with_path(dir_a.path().join("adapters.json"), false),
+        PackStore::with_root(dir_a.path().join("packs")),
+    )
+    .expect("server a");
+    let dir_b = tempfile::tempdir().expect("tempdir b");
+    let (port_b, _handle_b) = start_with_adapters_store_and_packs(
+        0,
+        "test-token".to_string(),
+        SpeechConfig::default(),
+        CallerConfig::default(),
+        SettingsStore::with_path(dir_b.path().join("adapters.json"), false),
+        PackStore::with_root(dir_b.path().join("packs")),
+    )
+    .expect("server b");
+    let client = reqwest::blocking::Client::new();
+    let scenario = read("examples/chest-pain-001.scenario.yaml");
+
+    client
+        .post(format!("http://127.0.0.1:{port_a}/api/packs/scenarios"))
+        .header("X-Callcraft-Token", "test-token")
+        .body(scenario)
+        .send()
+        .expect("save a")
+        .error_for_status()
+        .expect("save status");
+
+    let export = client
+        .post(format!("http://127.0.0.1:{port_a}/api/packs/local/export"))
+        .header("X-Callcraft-Token", "test-token")
+        .send()
+        .expect("export");
+    assert_eq!(export.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        export
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/zip")
+    );
+    let bytes = export.bytes().expect("zip bytes").to_vec();
+
+    let inspect: Value = client
+        .post(format!(
+            "http://127.0.0.1:{port_b}/api/packs/import/inspect"
+        ))
+        .header("X-Callcraft-Token", "test-token")
+        .header("Content-Type", "application/zip")
+        .body(bytes.clone())
+        .send()
+        .expect("inspect")
+        .json()
+        .expect("inspect JSON");
+    assert_eq!(inspect["report"]["action"], "install");
+    assert_eq!(inspect["report"]["can_import"], json!(true));
+
+    let imported: Value = client
+        .post(format!(
+            "http://127.0.0.1:{port_b}/api/packs/import?mode=install"
+        ))
+        .header("X-Callcraft-Token", "test-token")
+        .header("Content-Type", "application/zip")
+        .body(bytes)
+        .send()
+        .expect("import")
+        .json()
+        .expect("import JSON");
+    assert_eq!(imported["ok"], json!(true));
+
+    let listing: Value = client
+        .get(format!("http://127.0.0.1:{port_b}/api/packs"))
+        .header("X-Callcraft-Token", "test-token")
+        .send()
+        .expect("list b")
+        .json()
+        .expect("list JSON");
+    assert_eq!(listing["packs"][0]["scenarios"][0]["id"], "chest-pain-001");
+}

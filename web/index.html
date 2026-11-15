@@ -61,10 +61,14 @@
                   <span class="field-label">Pack</span>
                   <select id="library-pack" class="input"></select>
                 </label>
+                <button id="library-export" class="secondary" type="button">Export pack</button>
+                <label class="file-input" id="import-pack-label">Import pack<input id="library-import" type="file" accept=".zip,application/zip"></label>
+                <button id="library-rollback" class="secondary" type="button" hidden>Undo import</button>
                 <span id="library-meta" class="meta"></span>
               </div>
             </div>
             <div id="scenario-library" class="scenario-library" aria-live="polite"></div>
+            <div id="import-review" class="import-review" aria-live="polite" hidden></div>
           </section>
 
           <div class="brief-layout">

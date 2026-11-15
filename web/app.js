@@ -25,6 +25,10 @@ const libraryList = $("scenario-library");
 const libraryPack = $("library-pack");
 const libraryMeta = $("library-meta");
 const packPicker = $("pack-picker");
+const libraryExport = $("library-export");
+const libraryImport = $("library-import");
+const libraryRollback = $("library-rollback");
+const importReview = $("import-review");
 
 let sessionId = null;
 let scenarioId = null;
@@ -38,6 +42,8 @@ let briefTimer = null;
 let briefRequest = 0;
 let libraryPacks = [];
 let libraryWarning = "";
+let pendingImportBytes = null;
+let pendingImportReport = null;
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -310,6 +316,7 @@ function selectedPack() {
 
 function renderLibrary() {
   const pack = selectedPack();
+  libraryExport.disabled = !pack;
   packPicker.hidden = libraryPacks.length <= 1;
   if (!pack) {
     libraryMeta.textContent = "";
@@ -395,6 +402,177 @@ async function openPackScenario(packId, scenarioId) {
     updateBrief();
     setStatus(`Loaded ${data.scenario.title} from ${packId}`, "ok");
     document.querySelector(".source-sheet")?.scrollIntoView({ block: "start" });
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportPack() {
+  const pack = selectedPack();
+  if (!pack) return;
+  setStatus("Exporting pack...");
+  try {
+    const response = await fetch(`/api/packs/${encodeURIComponent(pack.id)}/export`, {
+      method: "POST",
+      headers: { "X-Callcraft-Token": token },
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = /filename="?([^";]+)"?/.exec(disposition);
+    downloadBlob(blob, match?.[1] || `${pack.id}.callcraftpack.zip`);
+    setStatus("Pack exported", "ok");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function inspectPackImport(file) {
+  setStatus("Inspecting pack...");
+  try {
+    const bytes = await file.arrayBuffer();
+    const response = await fetch("/api/packs/import/inspect", {
+      method: "POST",
+      headers: {
+        "X-Callcraft-Token": token,
+        "Content-Type": "application/zip",
+      },
+      body: bytes,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    pendingImportBytes = bytes;
+    pendingImportReport = data.report;
+    renderImportReview(data.report);
+    setStatus("Pack checked; review before import", "ok");
+  } catch (error) {
+    pendingImportBytes = null;
+    pendingImportReport = null;
+    importReview.hidden = false;
+    importReview.innerHTML = `<div class="import-errors">Import check failed: ${escapeHtml(error.message)}</div>`;
+    setStatus("Import check failed", "bad");
+  }
+}
+
+function renderImportReview(report) {
+  const rows = (report.scenarios || [])
+    .map((scenario) => {
+      const notes = [
+        ...(scenario.errors || []),
+        ...(scenario.warnings || []).map((warning) => `warning: ${warning}`),
+      ].join("; ");
+      return `<tr>
+        <td><span class="import-state ${escapeHtml(scenario.state)}">${escapeHtml(scenario.state)}</span></td>
+        <td>${escapeHtml(scenario.id)}</td>
+        <td>${escapeHtml(scenario.title)}</td>
+        <td>${escapeHtml(scenario.version)}</td>
+        <td>${scenario.critical_items || 0}</td>
+        <td>${escapeHtml(notes || "—")}</td>
+      </tr>`;
+    })
+    .join("");
+  const errors = (report.errors || []).length
+    ? `<div class="import-errors">${report.errors.map(escapeHtml).join("<br>")}</div>`
+    : "";
+  const localOnly = (report.local_only || []).length
+    ? `<p class="library-warning">Replace removes local scenarios: ${escapeHtml(report.local_only.join(", "))}</p>`
+    : "";
+  const actionLabel = report.action === "install" ? "Install pack" : "Replace pack";
+  importReview.innerHTML = `
+    <div class="import-head">
+      <div>
+        <h4>${escapeHtml(report.name)}</h4>
+        <p>${escapeHtml(report.pack_id)} · v${escapeHtml(report.version)} · ${escapeHtml(report.visibility)} · ${escapeHtml(report.license)}</p>
+      </div>
+      <span class="import-state ${escapeHtml(report.action)}">${escapeHtml(report.action)}</span>
+    </div>
+    <p class="meta">checksum: ${escapeHtml(report.checksum)} · ${report.scenarios.length} scenario(s)</p>
+    ${errors}${localOnly}
+    <table class="import-table">
+      <thead><tr><th>State</th><th>ID</th><th>Title</th><th>Version</th><th>Critical</th><th>Notes</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="import-actions">
+      <button id="import-confirm" class="primary" type="button" ${report.can_import ? "" : "disabled"}>${actionLabel}</button>
+      <button id="import-cancel" class="secondary" type="button">Cancel</button>
+    </div>
+  `;
+  importReview.hidden = false;
+}
+
+async function confirmPackImport() {
+  if (!pendingImportBytes || !pendingImportReport) return;
+  const report = pendingImportReport;
+  setStatus(report.action === "install" ? "Installing pack..." : "Replacing pack...");
+  try {
+    const response = await fetch(
+      `/api/packs/import?mode=${encodeURIComponent(report.action)}`,
+      {
+        method: "POST",
+        headers: {
+          "X-Callcraft-Token": token,
+          "Content-Type": "application/zip",
+        },
+        body: pendingImportBytes,
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    pendingImportBytes = null;
+    pendingImportReport = null;
+    importReview.hidden = true;
+    libraryRollback.hidden = false;
+    await loadLibrary();
+    setStatus(report.action === "install" ? "Pack installed" : "Pack replaced", "ok");
+  } catch (error) {
+    importReview.innerHTML += `<div class="import-errors">${escapeHtml(error.message)}</div>`;
+    setStatus("Import failed", "bad");
+  }
+}
+
+function cancelPackImport() {
+  pendingImportBytes = null;
+  pendingImportReport = null;
+  importReview.hidden = true;
+  importReview.innerHTML = "";
+  setStatus("Import cancelled");
+}
+
+async function rollbackPack() {
+  const pack = selectedPack();
+  if (!pack) return;
+  if (!window.confirm(`Restore the last pre-import version of ${pack.name}?`)) return;
+  setStatus("Restoring backup...");
+  try {
+    const response = await fetch(`/api/packs/${encodeURIComponent(pack.id)}/rollback`, {
+      method: "POST",
+      headers: { "X-Callcraft-Token": token },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    libraryRollback.hidden = true;
+    await loadLibrary();
+    setStatus("Backup restored", "ok");
   } catch (error) {
     setStatus(error.message, "bad");
   }
@@ -674,6 +852,17 @@ function downloadReport() {
 $("load-example").addEventListener("click", loadExample);
 scenarioInput.addEventListener("input", updateBrief);
 libraryPack.addEventListener("change", renderLibrary);
+libraryExport.addEventListener("click", exportPack);
+libraryImport.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (file) await inspectPackImport(file);
+});
+importReview.addEventListener("click", (event) => {
+  if (event.target.id === "import-confirm") confirmPackImport();
+  if (event.target.id === "import-cancel") cancelPackImport();
+});
+libraryRollback.addEventListener("click", rollbackPack);
 $("start").addEventListener("click", startSession);
 $("send").addEventListener("click", sendTurn);
 $("record").addEventListener("click", toggleRecording);

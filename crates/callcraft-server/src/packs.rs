@@ -21,6 +21,9 @@ use callcraft_core::validate::{Validated, validate_yaml};
 
 pub const DEFAULT_PACK_ID: &str = "local";
 
+mod transport;
+pub use transport::{ImportMode, ImportReport, ImportScenario};
+
 #[derive(Debug, Clone)]
 pub struct PackStore {
     root: PathBuf,
@@ -470,6 +473,16 @@ fn default_pack_root() -> PathBuf {
         }
     }
     PathBuf::from(".callcraft").join("packs")
+}
+
+pub(super) fn write_bytes_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("pack directory: {error}"))?;
+    }
+    let temp_path = path.with_extension("tmp");
+    fs::write(&temp_path, bytes).map_err(|error| format!("pack write: {error}"))?;
+    set_private_permissions(&temp_path)?;
+    fs::rename(&temp_path, path).map_err(|error| format!("pack replace: {error}"))
 }
 
 fn write_private(path: &Path, text: &str) -> Result<(), String> {
