@@ -1,5 +1,7 @@
 # Callcraft
 
+[![ci](https://github.com/FieldmouseWorks/callcraft/actions/workflows/ci.yml/badge.svg)](https://github.com/FieldmouseWorks/callcraft/actions/workflows/ci.yml)
+
 A free, MIT-licensed alternative to closed 911 dispatcher training simulators.
 The product is the **open scenario and rubric format**; this repo is the
 reference implementation: a validator, a text-mode runner, and a checklist
