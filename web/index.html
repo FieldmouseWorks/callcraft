@@ -50,6 +50,23 @@
             <span id="scenario-meta" class="meta"></span>
           </header>
 
+          <section class="sheet library-sheet" aria-labelledby="library-heading">
+            <div class="sheet-head">
+              <div>
+                <p class="sheet-label">Library</p>
+                <h3 id="library-heading">Saved scenarios</h3>
+              </div>
+              <div class="library-tools">
+                <label class="field pack-picker" id="pack-picker" hidden>
+                  <span class="field-label">Pack</span>
+                  <select id="library-pack" class="input"></select>
+                </label>
+                <span id="library-meta" class="meta"></span>
+              </div>
+            </div>
+            <div id="scenario-library" class="scenario-library" aria-live="polite"></div>
+          </section>
+
           <div class="brief-layout">
             <section class="sheet source-sheet">
               <div class="sheet-head">
@@ -121,7 +138,8 @@
                 <button id="author-example" class="secondary" type="button">Load example</button>
                 <button id="author-validate" class="secondary" type="button">Validate</button>
                 <button id="author-render" class="secondary" type="button">Render &amp; download</button>
-                <button id="author-use" class="primary" type="button">Use in runner</button>
+                <button id="author-save-pack" class="primary" type="button">Save to pack</button>
+                <button id="author-use" class="secondary" type="button">Use in runner</button>
               </div>
               <div id="author-form" class="author-form"></div>
             </div>

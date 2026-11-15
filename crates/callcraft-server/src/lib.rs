@@ -7,6 +7,7 @@
 mod auth;
 mod caller_llm;
 mod handlers;
+pub mod packs;
 pub mod providers;
 pub mod speech;
 mod util;
@@ -34,6 +35,7 @@ struct AppState {
     speech: Arc<Mutex<speech::SpeechConfig>>,
     caller: Arc<Mutex<CallerConfig>>,
     settings: providers::SettingsStore,
+    packs: packs::PackStore,
     http: reqwest::Client,
 }
 
@@ -93,6 +95,26 @@ pub fn start_with_adapters_and_store(
     caller: CallerConfig,
     settings: providers::SettingsStore,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
+    start_with_adapters_store_and_packs(
+        port,
+        token,
+        speech,
+        caller,
+        settings,
+        packs::PackStore::from_env(),
+    )
+}
+
+/// Start with explicit adapters, settings storage, and pack storage. Tests use
+/// this to keep agency packs out of the real user data directory.
+pub fn start_with_adapters_store_and_packs(
+    port: u16,
+    token: String,
+    speech: speech::SpeechConfig,
+    caller: CallerConfig,
+    settings: providers::SettingsStore,
+    packs: packs::PackStore,
+) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
     listener.set_nonblocking(true)?;
     let actual_port = listener.local_addr()?.port();
@@ -106,6 +128,7 @@ pub fn start_with_adapters_and_store(
         speech: Arc::new(Mutex::new(speech)),
         caller: Arc::new(Mutex::new(caller)),
         settings,
+        packs,
         http,
     };
 
@@ -168,6 +191,19 @@ fn app(state: AppState) -> Router {
         .route(
             "/api/scenario/render",
             post(handlers::scenario::render_scenario),
+        )
+        .route("/api/packs", get(handlers::packs::list_packs))
+        .route(
+            "/api/packs/scenarios",
+            post(handlers::packs::save_default_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios",
+            post(handlers::packs::save_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios/{scenario_id}",
+            get(handlers::packs::open_scenario),
         )
         .route("/api/sessions", post(handlers::sessions::create_session))
         .route(

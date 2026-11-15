@@ -38,11 +38,12 @@ The same server powers `callcraft serve` in a browser.
 
 `callcraft serve` prints a loopback URL with a per-launch token. Open it and:
 
-1. Load a scenario YAML (file picker) or click **Load example**.
-2. **Start session** — the server creates an in-memory session from the file.
+1. Pick a saved scenario from the library, load a scenario YAML, or click
+   **Load example**.
+2. **Test drive** / **Start session** — the server creates an in-memory session.
 3. Type trainee turns; the deterministic caller answers only from the fact base.
 4. Record rubric events with the chips generated from the scenario's event anchors.
-5. **Finish & score** — get the checklist result, evidence, critical failures,
+5. **End call & score** — get the checklist result, evidence, critical failures,
    drift count, and a downloadable JSON report.
 
 The Tauri shell serves the same UI in a native window. No Node, no build step.
@@ -55,12 +56,27 @@ transcript. See [docs/DESIGN.md](docs/DESIGN.md).
 The **Author** tab edits the scenario as structured fields — metadata, safety,
 persona, facts, rubric items, and anchors — against the same schema the runner
 enforces. Validation runs on every edit (debounced); rendering is blocked while
-the scenario is invalid. **Render & download** writes YAML, and **Use in
-runner** loads the rendered scenario straight into a session. Unknown fields in
-a loaded file are preserved.
+the scenario is invalid. **Save to pack** writes the scenario into the local
+agency pack so it appears in the Prepare library after a restart. **Render &
+download** is the single-scenario share, and **Use in runner** loads the
+rendered scenario into the current session. Unknown fields in a loaded file are
+preserved.
 
 Authoring round-trips through the core: YAML parses into the typed model, the
 form edits that model, and the server validates then serializes it back.
+
+## Agency packs
+
+A pack is a local directory of agency-owned scenarios under the OS local-data
+directory. It is never committed to the repo and never uploaded by the app.
+`Save to pack` creates the default `local` pack on first use; the Prepare
+library lists saved scenarios and starts them by pack id. Validate a pack with:
+
+```bash
+cargo run -p callcraft-cli -- pack validate <pack-dir>
+```
+
+The pack manifest, store paths, and API are in [docs/PACKS.md](docs/PACKS.md).
 
 ## Voice
 
@@ -153,7 +169,7 @@ PILOT-30-DAY.md    pilot plan and success criteria
 v0.1 — text and voice turns, deterministic caller with optional LLM
 decisioning, caller and speech provider registries with keychain-backed
 settings, checklist scoring, JSON reports, byte-identical replay, session API,
-runner UI, structured authoring UI, and a Tauri shell scaffold. Not built yet:
+runner UI, structured authoring UI, local agency packs, and a Tauri shell scaffold. Not built yet:
 native file dialog, auth beyond the per-launch token. The 30-day pilot criteria in
 [PILOT-30-DAY.md](PILOT-30-DAY.md) decide whether any of that gets built.
 

@@ -21,6 +21,10 @@ const briefDuration = $("brief-duration");
 const briefVoice = $("brief-voice");
 const briefCounts = $("brief-counts");
 const sessionScenario = $("session-scenario");
+const libraryList = $("scenario-library");
+const libraryPack = $("library-pack");
+const libraryMeta = $("library-meta");
+const packPicker = $("pack-picker");
 
 let sessionId = null;
 let scenarioId = null;
@@ -32,6 +36,8 @@ let chunks = [];
 let sessionStartedAt = null;
 let briefTimer = null;
 let briefRequest = 0;
+let libraryPacks = [];
+let libraryWarning = "";
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -238,46 +244,183 @@ async function startSession() {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
       body: scenarioInput.value,
     });
-
-    sessionId = data.session_id;
-    scenarioId = data.scenario.id;
-    recordedEvents = new Set();
-    report = null;
-    finished = false;
-    sessionStartedAt = Date.now();
-    document.body.classList.add("session-live");
-    document.body.classList.remove("session-review");
-
-    transcriptEl.replaceChildren();
-    scorecard.hidden = true;
-    scorecard.innerHTML = "";
-    $("download").disabled = true;
-    $("finish").disabled = false;
-    $("send").disabled = false;
-    turnInput.disabled = false;
-    recordButton.disabled = true;
-    recordButton.textContent = "Record turn";
-    refreshVoiceStatus();
-    $("session-title").textContent = data.scenario.title;
-    $("session-stage-label").textContent = "Run / Live call";
-    sessionScenario.innerHTML = `
-      <strong>${escapeHtml(data.scenario.title)}</strong>
-      <p class="meta mono">${escapeHtml(data.scenario.id)}</p>
-      <p>${escapeHtml(data.scenario.disclaimer)}</p>
-    `;
-    sessionPanel.hidden = false;
-
-    renderEvents(data.events || []);
-    bubble("system", data.scenario.disclaimer, "00:00");
-    for (const warning of data.warnings || []) bubble("system", `warning: ${warning}`, "00:00");
-
-    setStatus("Session running", "ok");
-    setSessionStatus("In progress");
-    turnInput.focus();
+    beginSession(data);
   } catch (error) {
     $("start").disabled = !scenarioInput.value.trim();
     setStatus(error.message, "bad");
     scenarioOutput.textContent = error.message;
+  }
+}
+
+async function startPackScenario(packId, scenarioId) {
+  setStatus("Starting saved scenario...");
+  try {
+    const data = await api("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pack_id: packId, scenario_id: scenarioId }),
+    });
+    beginSession(data);
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+function beginSession(data) {
+  sessionId = data.session_id;
+  scenarioId = data.scenario.id;
+  recordedEvents = new Set();
+  report = null;
+  finished = false;
+  sessionStartedAt = Date.now();
+  document.body.classList.add("session-live");
+  document.body.classList.remove("session-review");
+
+  transcriptEl.replaceChildren();
+  scorecard.hidden = true;
+  scorecard.innerHTML = "";
+  $("download").disabled = true;
+  $("finish").disabled = false;
+  $("send").disabled = false;
+  turnInput.disabled = false;
+  recordButton.disabled = true;
+  recordButton.textContent = "Record turn";
+  refreshVoiceStatus();
+  $("session-title").textContent = data.scenario.title;
+  $("session-stage-label").textContent = "Run / Live call";
+  sessionScenario.innerHTML = `
+    <strong>${escapeHtml(data.scenario.title)}</strong>
+    <p class="meta mono">${escapeHtml(data.scenario.id)}</p>
+    <p>${escapeHtml(data.scenario.disclaimer)}</p>
+  `;
+  sessionPanel.hidden = false;
+
+  renderEvents(data.events || []);
+  bubble("system", data.scenario.disclaimer, "00:00");
+  for (const warning of data.warnings || []) bubble("system", `warning: ${warning}`, "00:00");
+
+  setStatus("Session running", "ok");
+  setSessionStatus("In progress");
+  turnInput.focus();
+}
+
+function selectedPack() {
+  return libraryPacks.find((pack) => pack.id === libraryPack.value) || libraryPacks[0] || null;
+}
+
+function renderLibrary() {
+  const pack = selectedPack();
+  packPicker.hidden = libraryPacks.length <= 1;
+  if (!pack) {
+    libraryMeta.textContent = "";
+    libraryList.innerHTML = `
+      <div class="library-empty">
+        <strong>No saved scenarios yet.</strong>
+        Author a scenario and choose Save to pack. Load example gives you a synthetic call to start from.
+      </div>
+    `;
+    return;
+  }
+  if (pack.error) {
+    libraryMeta.textContent = "Pack error";
+    libraryList.innerHTML = `<div class="library-empty"><strong>${escapeHtml(pack.name)}</strong>${escapeHtml(pack.error)}</div>`;
+    return;
+  }
+
+  const scenarios = pack.scenarios || [];
+  libraryMeta.textContent = `${pack.name} · ${scenarios.length} scenario${scenarios.length === 1 ? "" : "s"}`;
+  if (libraryWarning) {
+    libraryMeta.textContent = `${libraryWarning} · ${libraryMeta.textContent}`;
+    libraryMeta.className = "meta warn";
+  } else {
+    libraryMeta.className = "meta";
+  }
+  if (!scenarios.length) {
+    libraryList.innerHTML = `
+      <div class="library-empty">
+        <strong>${escapeHtml(pack.name)} is empty.</strong>
+        Author a scenario and choose Save to pack, or load the example and test drive it.
+      </div>
+    `;
+    return;
+  }
+
+  libraryList.innerHTML = scenarios
+    .map((scenario) => {
+      const difficulty = scenario.difficulty || "—";
+      const duration = scenario.duration_minutes ? `${scenario.duration_minutes} min` : "—";
+      const status = scenario.valid ? (scenario.status || "draft") : "invalid";
+      const error = scenario.error
+        ? `<p class="library-warning">${escapeHtml(scenario.error)}</p>`
+        : "";
+      const warnings = scenario.warnings?.length
+        ? `<p class="library-warning">${scenario.warnings.length} warning(s)</p>`
+        : "";
+      return `
+        <article class="library-card">
+          <div class="library-card-top">
+            <div>
+              <h4 class="library-title">${escapeHtml(scenario.title || scenario.id)}</h4>
+              <p class="library-id">${escapeHtml(scenario.id)} · v${escapeHtml(scenario.version || "—")}</p>
+            </div>
+            <span class="library-status ${scenario.valid ? "" : "bad"}">${escapeHtml(status)}</span>
+          </div>
+          <p class="library-facts">${escapeHtml(difficulty)} · ${escapeHtml(duration)} · ${scenario.facts} facts · ${scenario.rubric_items} rubric · ${scenario.critical_items} critical</p>
+          ${error}${warnings}
+          <div class="library-actions">
+            <button class="primary" type="button" data-start-scenario="${escapeHtml(scenario.id)}" ${scenario.valid ? "" : "disabled"}>Test drive</button>
+            <button class="secondary" type="button" data-open-scenario="${escapeHtml(scenario.id)}">Open</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  for (const button of libraryList.querySelectorAll("[data-start-scenario]")) {
+    button.addEventListener("click", () =>
+      startPackScenario(pack.id, button.dataset.startScenario)
+    );
+  }
+  for (const button of libraryList.querySelectorAll("[data-open-scenario]")) {
+    button.addEventListener("click", () => openPackScenario(pack.id, button.dataset.openScenario));
+  }
+}
+
+async function openPackScenario(packId, scenarioId) {
+  try {
+    const data = await api(
+      `/api/packs/${encodeURIComponent(packId)}/scenarios/${encodeURIComponent(scenarioId)}`
+    );
+    scenarioInput.value = data.yaml;
+    updateBrief();
+    setStatus(`Loaded ${data.scenario.title} from ${packId}`, "ok");
+    document.querySelector(".source-sheet")?.scrollIntoView({ block: "start" });
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function loadLibrary() {
+  try {
+    const data = await api("/api/packs");
+    libraryPacks = data.packs || [];
+    const previous = libraryPack.value;
+    libraryPack.innerHTML = libraryPacks
+      .map(
+        (pack) =>
+          `<option value="${escapeHtml(pack.id)}">${escapeHtml(pack.name)}</option>`
+      )
+      .join("");
+    if (libraryPacks.some((pack) => pack.id === previous)) {
+      libraryPack.value = previous;
+    } else if (libraryPacks.some((pack) => pack.id === data.default_pack_id)) {
+      libraryPack.value = data.default_pack_id;
+    }
+    libraryWarning = data.warning || "";
+    renderLibrary();
+  } catch (error) {
+    libraryMeta.textContent = error.message;
+    libraryMeta.className = "meta bad";
   }
 }
 
@@ -530,6 +673,7 @@ function downloadReport() {
 
 $("load-example").addEventListener("click", loadExample);
 scenarioInput.addEventListener("input", updateBrief);
+libraryPack.addEventListener("change", renderLibrary);
 $("start").addEventListener("click", startSession);
 $("send").addEventListener("click", sendTurn);
 $("record").addEventListener("click", toggleRecording);
@@ -619,7 +763,11 @@ $("run-diagnostics").addEventListener("click", runDiagnostics);
 window.refreshVoiceStatus = refreshVoiceStatus;
 
 updateBrief();
-if (token) refreshVoiceStatus();
+if (token) {
+  refreshVoiceStatus();
+  loadLibrary();
+}
+window.refreshLibrary = loadLibrary;
 
 if (!token) {
   setStatus("Missing session token — open the URL printed by `callcraft serve`.", "bad");

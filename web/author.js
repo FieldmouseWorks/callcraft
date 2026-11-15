@@ -452,7 +452,33 @@
     URL.revokeObjectURL(url);
   }
 
+  async function saveToPack() {
+    if (!data) return;
+    const yaml = await renderYaml();
+    if (!yaml) return;
+    setMeta("Saving to pack...");
+    try {
+      const result = await api("/api/packs/scenarios", {
+        method: "POST",
+        headers: { "Content-Type": "text/yaml" },
+        body: yaml,
+      });
+      setMeta(`Saved to ${result.pack_id}`, "ok");
+      setOutput(
+        `Saved ${result.scenario.title} (${result.scenario.id}) to pack ${result.pack_id}.
+` +
+          `${result.scenario.facts} facts · ${result.scenario.rubric_items} rubric items · ` +
+          `${result.scenario.critical_items} critical.`
+      );
+      if (window.refreshLibrary) window.refreshLibrary();
+    } catch (error) {
+      setMeta("Save failed", "bad");
+      setOutput(error.message);
+    }
+  }
+
   async function useInRunner() {
+
     const yaml = await renderYaml();
     if (!yaml) return;
     scenarioInput.value = yaml;
@@ -516,6 +542,7 @@
 
   $("author-validate").addEventListener("click", runValidate);
   $("author-render").addEventListener("click", downloadYaml);
+  $("author-save-pack").addEventListener("click", saveToPack);
   $("author-use").addEventListener("click", useInRunner);
   document.querySelectorAll(".tab").forEach((button) => {
     button.addEventListener("click", () => switchTab(button.dataset.tab));

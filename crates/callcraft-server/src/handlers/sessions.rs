@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -12,6 +13,7 @@ use serde_json::json;
 use callcraft_core::report;
 use callcraft_core::scenario::Scenario;
 use callcraft_core::session::{Session, Speaker, Utterance};
+use callcraft_core::validate::Validated;
 use callcraft_core::{CallerEngine, report::Report};
 
 use crate::caller_llm;
@@ -87,21 +89,66 @@ fn prune(sessions: &mut HashMap<String, StoredSession>) {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct StartRequest {
+    #[serde(default)]
+    pack_id: Option<String>,
+    scenario_id: String,
+}
+
 pub(crate) async fn create_session(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<TokenQuery>,
-    body: String,
+    body: Bytes,
 ) -> Response {
     if let Some(response) = auth_guard(&state, &headers, &query) {
         return response;
     }
 
-    let validated = match callcraft_core::validate_yaml(&body, false) {
-        Ok(validated) => validated,
-        Err(error) => return error_response(StatusCode::BAD_REQUEST, &error.to_string()),
+    let is_json = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+
+    let (validated, source, pack_id) = if is_json {
+        let request: StartRequest = match serde_json::from_slice(&body) {
+            Ok(request) => request,
+            Err(error) => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    &format!("session request JSON: {error}"),
+                );
+            }
+        };
+        let pack_id = request
+            .pack_id
+            .unwrap_or_else(|| state.packs.default_pack_id());
+        match state.packs.open(&pack_id, &request.scenario_id) {
+            Ok((_, validated)) => (validated, "pack", Some(pack_id)),
+            Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+        }
+    } else {
+        let text = match String::from_utf8(body.to_vec()) {
+            Ok(text) => text,
+            Err(_) => return error_response(StatusCode::BAD_REQUEST, "scenario body is not UTF-8"),
+        };
+        let validated = match callcraft_core::validate_yaml(&text, false) {
+            Ok(validated) => validated,
+            Err(error) => return error_response(StatusCode::BAD_REQUEST, &error.to_string()),
+        };
+        (validated, "yaml", None)
     };
 
+    start_session(&state, validated, source, pack_id)
+}
+
+fn start_session(
+    state: &AppState,
+    validated: Validated,
+    source: &str,
+    pack_id: Option<String>,
+) -> Response {
     let scenario = validated.scenario;
     let events = collect_events(&scenario);
     let session = Session::new(&scenario, "api", now_iso());
@@ -132,6 +179,9 @@ pub(crate) async fn create_session(
         "scenario": summary(&scenario),
         "events": events,
         "warnings": validated.warnings,
+        "source": source,
+        "pack_id": pack_id,
+        "approval": "none",
     }))
     .into_response()
 }

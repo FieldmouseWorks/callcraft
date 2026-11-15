@@ -1,3 +1,4 @@
+pub(crate) mod packs;
 pub(crate) mod providers;
 pub(crate) mod scenario;
 pub(crate) mod sessions;
