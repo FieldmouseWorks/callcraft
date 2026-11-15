@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Main window capability. Remote loopback origin is the app's own server.","remote":{"urls":["http://127.0.0.1:*/*"]},"local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
+{"default":{"identifier":"default","description":"Main window capability. Remote loopback origin is the app's own server.","remote":{"urls":["http://127.0.0.1:*/*"]},"local":true,"windows":["main"],"permissions":["core:default","dialog:default","allow-app-info"]}}

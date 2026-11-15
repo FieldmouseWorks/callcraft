@@ -4,6 +4,27 @@ Purpose: prove the desktop shell works on the pilot's target platform before
 voice work. This is a technical spike, not the pilot. Record what actually
 happens; a failed check with a clear error is a successful spike.
 
+## Linux smoke (WebKitGTK) — completed 2026-11-15
+
+Before Windows hardware was available, the desktop shell was smoke-tested on
+Linux under X11/WebKitGTK:
+
+- secure context: true
+- Tauri IPC: returned `Callcraft 0.1.0 (linux)`
+- microphone: granted (analog stereo input), media devices present
+
+Two real defects were found and fixed:
+
+1. App commands must be declared to `tauri-build` (`AppManifest::commands`) and
+   granted in the window capability (`allow-app-info`); otherwise remote-origin
+   IPC fails with "Plugin not found".
+2. WebKitGTK denies microphone requests by default. The shell now allows
+   `PermissionKind::Microphone` in `on_permission_request`; capture still only
+   starts on an explicit Record click.
+
+This is not a substitute for the Windows checklist. WebView2, SmartScreen,
+AppLocker/WDAC, and OS microphone policy still require a Windows machine.
+
 ## Exit criteria
 
 All of these must pass on a real Windows 10/11 machine:

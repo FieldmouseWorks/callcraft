@@ -81,6 +81,9 @@ Both are token-gated and loopback-only like the rest of the API.
   provider and no telemetry.
 - Audio is not stored by Callcraft. Transcripts are part of the session report,
   just like text mode.
+- The desktop shell allows microphone capture in the Tauri permission handler;
+  capture starts only after an explicit Record click. The browser build asks
+  the browser's own permission.
 - Treat trainee recordings as sensitive. Agency policy decides whether cloud
   STT/TTS is allowed at all; local sidecars are the default assumption for
   public-safety deployments.
