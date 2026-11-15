@@ -46,6 +46,9 @@ The same server powers `callcraft serve` in a browser.
    drift count, and a downloadable JSON report.
 
 The Tauri shell serves the same UI in a native window. No Node, no build step.
+The client follows the Logbook design: a paper-light Prepare brief, a ruled Run
+log with observer marks, and a Debrief that links rubric evidence back to the
+transcript. See [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Authoring UI
 

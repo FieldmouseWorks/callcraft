@@ -456,6 +456,7 @@
     const yaml = await renderYaml();
     if (!yaml) return;
     scenarioInput.value = yaml;
+    if (window.updateBrief) window.updateBrief();
     switchTab("scenario-tab");
     statusEl.textContent = "Loaded authored scenario";
     statusEl.className = "status ok";
@@ -490,7 +491,9 @@
 
   function switchTab(id) {
     document.querySelectorAll(".tab").forEach((button) => {
-      button.classList.toggle("active", button.dataset.tab === id);
+      const active = button.dataset.tab === id;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
     });
     document.querySelectorAll(".tab-panel").forEach((panel) => {
       panel.hidden = panel.id !== id;

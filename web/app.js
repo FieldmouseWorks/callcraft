@@ -12,6 +12,15 @@ const recordButton = $("record");
 const voiceMeta = $("voice-meta");
 const callerAudio = $("caller-audio");
 const scorecard = $("scorecard");
+const briefTitle = $("brief-title");
+const briefSubtitle = $("brief-subtitle");
+const briefId = $("brief-id");
+const briefIncident = $("brief-incident");
+const briefDifficulty = $("brief-difficulty");
+const briefDuration = $("brief-duration");
+const briefVoice = $("brief-voice");
+const briefCounts = $("brief-counts");
+const sessionScenario = $("session-scenario");
 
 let sessionId = null;
 let scenarioId = null;
@@ -20,16 +29,93 @@ let report = null;
 let finished = false;
 let recorder = null;
 let chunks = [];
+let sessionStartedAt = null;
+let briefTimer = null;
+let briefRequest = 0;
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
   statusEl.className = `status ${kind}`;
+  const dot = document.querySelector(".status-dot");
+  if (dot) dot.className = `status-dot ${kind}`;
 }
 
 function setSessionStatus(text, kind = "") {
   const el = $("session-meta");
   el.textContent = text;
   el.className = `meta ${kind}`;
+}
+
+function yamlScalar(key) {
+  const match = scenarioInput.value.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+  if (!match) return "";
+  return match[1]
+    .replace(/\s+#.*$/, "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
+}
+
+function updateBrief() {
+  const text = scenarioInput.value.trim();
+  const title = yamlScalar("title") || (text ? "Untitled scenario" : "No scenario loaded");
+  briefTitle.textContent = title;
+  briefSubtitle.textContent = text
+    ? title === "Untitled scenario"
+      ? "YAML present. Add a title before authoring."
+      : "Ready to start the session."
+    : "Load a file or the example to see the brief.";
+  briefId.textContent = yamlScalar("id") || "—";
+  briefIncident.textContent = yamlScalar("incident_type") || "—";
+  briefDifficulty.textContent = yamlScalar("difficulty") || "—";
+  const duration = yamlScalar("duration_minutes");
+  briefDuration.textContent = duration ? `${duration} min` : "—";
+  $("start").disabled = !text;
+  $("scenario-meta").textContent = text ? "Checking..." : "";
+  scheduleBrief();
+}
+
+function scheduleBrief() {
+  clearTimeout(briefTimer);
+  briefTimer = setTimeout(refreshBrief, 350);
+}
+
+async function refreshBrief() {
+  const text = scenarioInput.value.trim();
+  const request = ++briefRequest;
+  if (!text) {
+    briefCounts.textContent = "";
+    $("scenario-meta").textContent = "";
+    return;
+  }
+  try {
+    const data = await api("/api/scenario/parse", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: text,
+    });
+    if (request !== briefRequest) return;
+    const scenario = data.scenario || {};
+    const facts = (scenario.facts || []).length;
+    const items = scenario.rubric?.items || [];
+    const critical = items.filter((item) => item.critical).length;
+    briefTitle.textContent = scenario.title || "Untitled scenario";
+    briefSubtitle.textContent = "Ready to start the session.";
+    briefId.textContent = scenario.id || "—";
+    briefIncident.textContent = scenario.incident_type || "—";
+    briefDifficulty.textContent = scenario.difficulty || "—";
+    briefDuration.textContent = scenario.duration_minutes
+      ? `${scenario.duration_minutes} min`
+      : "—";
+    briefCounts.textContent = `${facts} facts · ${items.length} rubric items · ${critical} critical`;
+    const warnings = data.warnings || [];
+    $("scenario-meta").textContent = warnings.length ? `${warnings.length} warning(s)` : "Valid";
+    $("start").disabled = false;
+  } catch (error) {
+    if (request !== briefRequest) return;
+    briefCounts.textContent = "";
+    $("scenario-meta").textContent = "Invalid";
+    $("start").disabled = true;
+  }
 }
 
 async function api(path, options = {}) {
@@ -48,16 +134,51 @@ async function api(path, options = {}) {
   return data;
 }
 
-function bubble(kind, text) {
-  const div = document.createElement("div");
-  div.className = `bubble ${kind}`;
-  const label = document.createElement("span");
-  label.className = "speaker";
-  label.textContent = kind === "trainee" ? "Trainee" : kind === "caller" ? "Caller" : "System";
-  const body = document.createElement("div");
+function elapsedLogTime() {
+  if (!sessionStartedAt) return "00:00";
+  const total = Math.floor((Date.now() - sessionStartedAt) / 1000);
+  const minutes = String(Math.floor(total / 60)).padStart(2, "0");
+  const seconds = String(total % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function formatUtteranceTime(ms) {
+  const total = Math.floor((ms || 0) / 1000);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function appendLogRow(kind, text, time, utteranceId) {
+  const row = document.createElement("li");
+  row.className = `log-row ${kind}`;
+  if (utteranceId) row.dataset.utteranceId = utteranceId;
+  const timeEl = document.createElement("span");
+  timeEl.className = "log-time";
+  timeEl.textContent = time || "";
+  const speaker = document.createElement("span");
+  speaker.className = "log-speaker";
+  speaker.textContent = kind === "trainee" ? "Trainee" : kind === "caller" ? "Caller" : "Note";
+  const body = document.createElement("p");
+  body.className = "log-text";
   body.textContent = text;
-  div.append(label, body);
-  transcriptEl.appendChild(div);
+  row.append(timeEl, speaker, body);
+  transcriptEl.appendChild(row);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+function bubble(kind, text, time, utteranceId) {
+  appendLogRow(kind, text, time ?? elapsedLogTime(), utteranceId);
+}
+
+function renderTranscript(utterances) {
+  transcriptEl.replaceChildren();
+  for (const utterance of utterances || []) {
+    appendLogRow(
+      utterance.speaker,
+      utterance.text,
+      formatUtteranceTime(utterance.t_ms),
+      utterance.id
+    );
+  }
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
@@ -78,6 +199,7 @@ function renderEvents(events) {
           body: JSON.stringify({ name }),
         });
         recordedEvents.add(name);
+        button.classList.add("recorded");
         bubble("system", `event recorded: ${name}`);
         setSessionStatus("Event recorded", "ok");
       } catch (error) {
@@ -95,6 +217,7 @@ async function loadExample() {
     const data = await api("/api/example");
     scenarioInput.value = data.yaml;
     scenarioOutput.textContent = "";
+    updateBrief();
     setStatus("Example loaded", "ok");
   } catch (error) {
     setStatus(error.message, "bad");
@@ -121,8 +244,11 @@ async function startSession() {
     recordedEvents = new Set();
     report = null;
     finished = false;
+    sessionStartedAt = Date.now();
+    document.body.classList.add("session-live");
+    document.body.classList.remove("session-review");
 
-    transcriptEl.innerHTML = "";
+    transcriptEl.replaceChildren();
     scorecard.hidden = true;
     scorecard.innerHTML = "";
     $("download").disabled = true;
@@ -133,18 +259,23 @@ async function startSession() {
     recordButton.textContent = "Record turn";
     refreshVoiceStatus();
     $("session-title").textContent = data.scenario.title;
+    $("session-stage-label").textContent = "Run / Live call";
+    sessionScenario.innerHTML = `
+      <strong>${escapeHtml(data.scenario.title)}</strong>
+      <p class="meta mono">${escapeHtml(data.scenario.id)}</p>
+      <p>${escapeHtml(data.scenario.disclaimer)}</p>
+    `;
     sessionPanel.hidden = false;
 
     renderEvents(data.events || []);
-    bubble("system", data.scenario.disclaimer);
-    bubble("system", `Session ${sessionId.slice(0, 8)} started.`);
-    for (const warning of data.warnings || []) bubble("system", `warning: ${warning}`);
+    bubble("system", data.scenario.disclaimer, "00:00");
+    for (const warning of data.warnings || []) bubble("system", `warning: ${warning}`, "00:00");
 
     setStatus("Session running", "ok");
     setSessionStatus("In progress");
     turnInput.focus();
   } catch (error) {
-    $("start").disabled = false;
+    $("start").disabled = !scenarioInput.value.trim();
     setStatus(error.message, "bad");
     scenarioOutput.textContent = error.message;
   }
@@ -154,7 +285,6 @@ async function sendTurn() {
   const text = turnInput.value.trim();
   if (!text || !sessionId || finished) return;
   turnInput.value = "";
-  bubble("trainee", text);
 
   try {
     const data = await api(`/api/sessions/${sessionId}/turns`, {
@@ -162,9 +292,15 @@ async function sendTurn() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    bubble("caller", data.caller);
+    if (Array.isArray(data.transcript)) {
+      renderTranscript(data.transcript);
+    } else {
+      bubble("trainee", text);
+      bubble("caller", data.caller);
+    }
     setSessionStatus("In progress");
   } catch (error) {
+    turnInput.value = text;
     setSessionStatus(error.message, "bad");
   }
   turnInput.focus();
@@ -178,10 +314,14 @@ async function refreshVoiceStatus() {
       recordButton.disabled = finished;
       voiceMeta.textContent = `Voice ready${callerMode}`;
       voiceMeta.className = "meta ok";
+      briefVoice.textContent = `Speech-to-text ready${callerMode}. Record turns from the live call.`;
+      briefVoice.className = "meta ok";
     } else {
       recordButton.disabled = true;
       voiceMeta.textContent = `Voice not configured — text only${callerMode}`;
       voiceMeta.className = "meta";
+      briefVoice.textContent = `Text only${callerMode}. Configure speech in Settings when needed.`;
+      briefVoice.className = "meta";
     }
   } catch (error) {
     recordButton.disabled = true;
@@ -214,6 +354,7 @@ async function toggleRecording() {
       await sendVoice(blob);
     };
     recorder.start();
+    recordButton.classList.add("recording");
     recordButton.textContent = "Stop recording";
     voiceMeta.textContent = "Recording...";
     voiceMeta.className = "meta warn";
@@ -258,6 +399,7 @@ async function sendVoice(blob) {
     voiceMeta.textContent = error.message;
     voiceMeta.className = "meta bad";
   }
+  recordButton.classList.remove("recording");
   recordButton.textContent = "Record turn";
   recordButton.disabled = finished;
   recorder = null;
@@ -278,6 +420,8 @@ async function finishSession() {
     document.querySelectorAll(".chip").forEach((chip) => {
       chip.disabled = true;
     });
+    document.body.classList.add("session-review");
+    $("session-stage-label").textContent = "Review / Debrief";
     renderScorecard(report);
     $("download").disabled = false;
     setStatus("Scored", "ok");
@@ -285,6 +429,9 @@ async function finishSession() {
       report.evaluation.overall.toUpperCase(),
       report.evaluation.overall === "pass" ? "ok" : "bad"
     );
+    window.scrollTo({
+      top: window.innerWidth > 900 ? 0 : Math.max(0, scorecard.offsetTop - 72),
+    });
   } catch (error) {
     setStatus(error.message, "bad");
   }
@@ -292,15 +439,25 @@ async function finishSession() {
 
 function renderScorecard(data) {
   const evaluation = data.evaluation;
-  const rows = evaluation.items
+  const items = evaluation.items || [];
+  const passed = items.filter((item) => item.result === "pass").length;
+  const failed = items.filter((item) => item.result === "fail").length;
+  const human = items.filter((item) => item.result === "needs_human").length;
+  const overall = String(evaluation.overall || "needs_human").toUpperCase();
+  const rows = items
     .map((item) => {
       const label =
         item.result === "pass" ? "PASS" : item.result === "fail" ? "FAIL" : "NEEDS HUMAN";
-      const evidence = (item.evidence || []).join(", ");
+      const evidence = (item.evidence || [])
+        .map(
+          (entry) =>
+            `<button type="button" class="evidence-link" data-evidence="${escapeHtml(entry)}">${escapeHtml(entry)}</button>`
+        )
+        .join(" ");
       return `<tr>
         <td class="result ${item.result}">${label}</td>
-        <td>${escapeHtml(item.id)}${item.critical ? ' <span class="critical">critical</span>' : ""}</td>
-        <td>${escapeHtml(evidence)}</td>
+        <td class="item"><strong>${escapeHtml(item.id)}</strong>${item.description ? `<span class="item-description">${escapeHtml(item.description)}</span>` : ""}${item.critical ? ' <span class="critical">critical</span>' : ""}</td>
+        <td>${evidence || "—"}</td>
       </tr>`;
     })
     .join("");
@@ -308,15 +465,31 @@ function renderScorecard(data) {
   const failures = evaluation.critical_failures.length
     ? `<p class="failures">Critical failures: ${escapeHtml(evaluation.critical_failures.join(", "))}</p>`
     : `<p class="clean">No critical failures.</p>`;
+  const latency = data.latency_ms?.p50_ms;
+  const meta = [
+    `Session ${escapeHtml(data.session_id.slice(0, 12))}`,
+    `cost $${Number(data.cost?.total_usd || 0).toFixed(2)}`,
+    `drift ${evaluation.drift_rejections}`,
+    `adapter faults ${evaluation.adapter_failures || 0}`,
+    latency ? `p50 ${latency} ms` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   scorecard.innerHTML = `
-    <h3>Overall: <span class="result ${evaluation.overall}">${evaluation.overall.toUpperCase()}</span></h3>
+    <div class="score-summary">
+      <div class="score-stat"><span>Overall</span><strong class="result ${evaluation.overall}">${overall}</strong></div>
+      <div class="score-stat"><span>Checklist</span><strong>${passed}/${items.length}</strong></div>
+      <div class="score-stat"><span>Failed</span><strong>${failed}</strong></div>
+      <div class="score-stat"><span>Human review</span><strong>${human}</strong></div>
+    </div>
+    <h3>Debrief</h3>
     <table>
       <thead><tr><th>Result</th><th>Item</th><th>Evidence</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     ${failures}
-    <p class="meta">Session ${escapeHtml(data.session_id.slice(0, 12))} · cost $${data.cost.total_usd.toFixed(2)} · drift ${evaluation.drift_rejections}</p>
+    <p class="meta">${meta}</p>
   `;
   scorecard.hidden = false;
 }
@@ -328,6 +501,19 @@ function escapeHtml(value) {
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character])
   );
 }
+
+scorecard.addEventListener("click", (event) => {
+  const link = event.target.closest("[data-evidence]");
+  if (!link) return;
+  const evidence = link.dataset.evidence;
+  const target = [...transcriptEl.querySelectorAll(".log-row")].find(
+    (row) => row.dataset.utteranceId === evidence
+  );
+  if (!target) return;
+  target.scrollIntoView({ block: "center" });
+  target.classList.add("highlight");
+  setTimeout(() => target.classList.remove("highlight"), 1600);
+});
 
 function downloadReport() {
   if (!report) return;
@@ -343,16 +529,36 @@ function downloadReport() {
 }
 
 $("load-example").addEventListener("click", loadExample);
+scenarioInput.addEventListener("input", updateBrief);
 $("start").addEventListener("click", startSession);
 $("send").addEventListener("click", sendTurn);
 $("record").addEventListener("click", toggleRecording);
 $("finish").addEventListener("click", finishSession);
 $("download").addEventListener("click", downloadReport);
+$("back-to-brief").addEventListener("click", () => {
+  if (!finished && sessionId && !window.confirm("Leave this session without scoring?")) return;
+  document.body.classList.remove("session-live", "session-review");
+  $("session-stage-label").textContent = "Run / Live call";
+  sessionPanel.hidden = true;
+  sessionId = null;
+  report = null;
+  finished = false;
+  sessionStartedAt = null;
+  recordButton.classList.remove("recording");
+  scorecard.hidden = true;
+  scorecard.innerHTML = "";
+  $("download").disabled = true;
+  setStatus("Ready");
+  setSessionStatus("");
+  updateBrief();
+  window.scrollTo({ top: 0 });
+});
 
 $("file").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
   scenarioInput.value = await file.text();
+  updateBrief();
   setStatus(`Loaded ${file.name}`, "ok");
 });
 
@@ -411,6 +617,9 @@ async function runDiagnostics() {
 $("run-diagnostics").addEventListener("click", runDiagnostics);
 
 window.refreshVoiceStatus = refreshVoiceStatus;
+
+updateBrief();
+if (token) refreshVoiceStatus();
 
 if (!token) {
   setStatus("Missing session token — open the URL printed by `callcraft serve`.", "bad");
