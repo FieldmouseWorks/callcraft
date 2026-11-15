@@ -1,0 +1,20 @@
+[package]
+name = "callcraft-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Tauri desktop shell for Callcraft"
+
+[[bin]]
+name = "callcraft-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+callcraft-server = { path = "../callcraft-server" }
+tauri.workspace = true
+tauri-plugin-dialog.workspace = true
+uuid.workspace = true

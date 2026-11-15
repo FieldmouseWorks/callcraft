@@ -1,0 +1,20 @@
+[package]
+name = "callcraft-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Callcraft command line runner"
+
+[[bin]]
+name = "callcraft"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+callcraft-core = { path = "../callcraft-core" }
+callcraft-server = { path = "../callcraft-server" }
+serde_json.workspace = true
+time.workspace = true
+uuid.workspace = true

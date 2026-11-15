@@ -1,0 +1,23 @@
+format: callcraft-scenario/v0.1
+id: real-phone-001
+title: Real Phone Number
+version: 1.0.0
+license: CC-BY-4.0
+language: en-US
+persona:
+  display_name: Sam
+facts:
+  - id: callback
+    value: "Call me at 425-867-5309"
+    disclosure: on_question
+    triggers: [number]
+rubric:
+  items:
+    - id: callback_asked
+      description: Asks for a callback number
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: "(?i)number"
+safety:
+  disclaimer: "Training simulation."

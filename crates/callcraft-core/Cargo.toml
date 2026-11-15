@@ -1,0 +1,19 @@
+[package]
+name = "callcraft-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Callcraft core: scenario format, deterministic caller, scoring, reports"
+
+[dependencies]
+jsonschema.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

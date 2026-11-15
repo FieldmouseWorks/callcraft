@@ -1,0 +1,6 @@
+scenario: chest-pain-001
+turns:
+  - text: "Nine one one, what's your emergency?"
+  - text: "Okay, where are you?"
+  - text: "Medics are on the way."
+  - text: "What's the best number to reach you?"

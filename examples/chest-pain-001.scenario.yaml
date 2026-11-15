@@ -1,0 +1,197 @@
+# Worked example — synthetic content. No real people, addresses, or numbers.
+format: callcraft-scenario/v0.1
+id: chest-pain-001
+title: Chest Pain — Adult, Alone at Home
+version: 1.0.0
+license: CC-BY-4.0
+language: en-US
+incident_type: medical
+difficulty: basic
+duration_minutes: 6
+authors: ["Callcraft project"]
+tags: [medical, chest-pain, als, pre-arrival]
+
+persona:
+  display_name: Maria
+  age: 58
+  voice:
+    sex: female
+    accent: neutral
+    pace: normal
+  emotional_state: anxious
+  environment:
+    noise: [dog barking, television]
+    signal: cellular
+  impairments: []
+
+facts:
+  - id: chief_complaint
+    value: "Chest pain, started about 20 minutes ago"
+    disclosure: on_question
+    triggers: [pain, hurt, chest, wrong, emergency]
+    verifiable: false
+
+  - id: radiation
+    value: "It spreads into my left arm and jaw"
+    disclosure: if_asked
+    triggers: [arm, jaw, spread, radiate]
+    verifiable: false
+
+  - id: breathing
+    value: "I'm short of breath, it's hard to talk much"
+    disclosure: if_asked
+    triggers: [breathing, breathe, short of breath]
+    verifiable: false
+
+  - id: consciousness
+    value: "I'm awake. I haven't passed out."
+    disclosure: if_asked
+    triggers: [conscious, awake, pass out, dizzy]
+    verifiable: false
+
+  - id: address
+    value: "1234 Firwood Lane, Cedar Hollow"
+    disclosure: on_question
+    triggers: [where, address, location, located, live]
+    verifiable: true
+
+  - id: cross_street
+    value: "Between Firwood Park and the old mill"
+    disclosure: if_asked
+    triggers: [cross street, nearest, landmark]
+    verifiable: true
+
+  - id: callback
+    value: "555-0142"
+    disclosure: on_question
+    triggers: [number, call back, phone, reach]
+    verifiable: true
+
+  - id: alone
+    value: "I'm alone. My husband is at work."
+    disclosure: if_asked
+    triggers: [alone, someone with you, anyone there]
+    verifiable: false
+
+  - id: door
+    value: "The front door is unlocked"
+    disclosure: if_asked
+    triggers: [door, get in, access]
+    verifiable: true
+
+  - id: medications
+    value: "I have nitroglycerin tablets in the kitchen"
+    disclosure: if_asked
+    triggers: [medication, medicine, pills, nitro]
+    verifiable: false
+
+  - id: history
+    value: "I had a stent put in two years ago"
+    disclosure: if_asked
+    triggers: [history, heart, before, surgery]
+    verifiable: false
+
+  - id: age
+    value: "I'm 58"
+    disclosure: if_asked
+    triggers: [age, old]
+    verifiable: false
+
+  - id: name
+    value: "Maria Alvarez"
+    disclosure: if_asked
+    triggers: [name, who am i speaking]
+    verifiable: false
+
+timeline:
+  - at_seconds: 0
+    caller_state: anxious, clear speech
+  - at_seconds: 120
+    caller_state: more distressed, shorter answers
+  - at_seconds: 240
+    caller_state: struggling to speak in full sentences
+
+rubric:
+  scoring: checklist
+  critical_must_pass: true
+  human_review_required: true
+  items:
+    - id: address_verified
+      description: "Confirms the exact address and a cross street or landmark"
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: '(?i)(confirm|verify|read back).{0,60}(address|location)'
+          - utterance_pair: [caller_address, trainee_address_repeat]
+      evidence_required: true
+
+    - id: callback_verified
+      description: "Confirms the callback number"
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: '(?i)(confirm|verify|read back).{0,40}(number|phone)'
+          - utterance_pair: [caller_callback, trainee_callback_repeat]
+      evidence_required: true
+
+    - id: chief_complaint
+      description: "Establishes the nature of the emergency in the caller's words"
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: '(?i)(what.{0,20}(wrong|happening|emergency))'
+      evidence_required: true
+
+    - id: breathing_check
+      description: "Asks about breathing"
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: '(?i)(breath|breathe)'
+      evidence_required: true
+
+    - id: consciousness_check
+      description: "Asks whether the caller is conscious and alert"
+      critical: true
+      anchors:
+        any_of:
+          - transcript_regex: '(?i)(conscious|awake|alert|pass(ed)? out)'
+      evidence_required: true
+
+    - id: pre_arrival_instructions
+      description: "Delivers the agency's pre-arrival instructions for suspected cardiac chest pain"
+      critical: true
+      anchors:
+        any_of:
+          - event: protocol_card_delivered
+      evidence_required: true
+      human_review: required
+
+    - id: stay_on_line
+      description: "Tells the caller to stay on the line until responders arrive"
+      critical: false
+      anchors:
+        any_of:
+          - transcript_regex: '(?i)(stay on the (line|phone))'
+      evidence_required: true
+
+    - id: dispatch_priority
+      description: "Marks the call as a priority cardiac response"
+      critical: true
+      anchors:
+        any_of:
+          - event: priority_marked
+      evidence_required: true
+
+geography:
+  pack: synthetic
+  references:
+    - "Cedar Hollow (fictional)"
+    - "Firwood Park (fictional)"
+
+safety:
+  disclaimer: "Training simulation. Not a certification. Pre-arrival content is agency-owned."
+  content_warnings: [medical emergency]
+
+xapi:
+  enabled: true

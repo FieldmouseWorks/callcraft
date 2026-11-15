@@ -1,0 +1,21 @@
+[package]
+name = "callcraft-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Loopback HTTP API and static UI hosting for Callcraft"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+callcraft-core = { path = "../callcraft-core" }
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+callcraft-core = { path = "../callcraft-core" }
+reqwest.workspace = true

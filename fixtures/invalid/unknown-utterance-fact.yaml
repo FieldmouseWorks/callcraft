@@ -1,0 +1,23 @@
+format: callcraft-scenario/v0.1
+id: unknown-fact-ref-001
+title: Unknown Utterance Pair Fact
+version: 1.0.0
+license: CC-BY-4.0
+language: en-US
+persona:
+  display_name: Sam
+facts:
+  - id: address
+    value: "1234 Example Lane"
+    disclosure: on_question
+    triggers: [address]
+rubric:
+  items:
+    - id: address_verified
+      description: Confirms the address
+      critical: true
+      anchors:
+        any_of:
+          - utterance_pair: [caller_nonexistent, trainee_repeat]
+safety:
+  disclaimer: "Training simulation."

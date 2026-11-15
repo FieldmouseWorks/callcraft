@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Callcraft</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Callcraft</h1>
+      <p class="sub">Open 911 dispatcher training — author scenarios, run calls, score them. Practice aid, not a certification.</p>
+    </div>
+    <span id="status" class="status">Ready</span>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="scenario-tab" type="button" role="tab">Scenario</button>
+        <button class="tab" data-tab="author-tab" type="button" role="tab">Author</button>
+      </div>
+
+      <div id="scenario-tab" class="tab-panel">
+        <div class="panel-head">
+          <h2>Scenario file</h2>
+          <span id="scenario-meta" class="meta"></span>
+        </div>
+        <div class="row">
+          <label class="file-input">Load YAML<input id="file" type="file" accept=".yaml,.yml"></label>
+          <button id="load-example" class="secondary" type="button">Load example</button>
+          <button id="start" class="primary" type="button">Start session</button>
+        </div>
+        <textarea id="scenario" spellcheck="false" placeholder="Paste a scenario file here..."></textarea>
+        <pre id="scenario-output" class="output" aria-live="polite"></pre>
+      </div>
+
+      <div id="author-tab" class="tab-panel" hidden>
+        <div class="panel-head">
+          <h2>Author scenario</h2>
+          <span id="author-meta" class="meta"></span>
+        </div>
+        <div class="row">
+          <label class="file-input">Load YAML<input id="author-file" type="file" accept=".yaml,.yml"></label>
+          <button id="author-example" class="secondary" type="button">Load example</button>
+          <button id="author-validate" class="secondary" type="button">Validate</button>
+          <button id="author-render" class="secondary" type="button">Render &amp; download</button>
+          <button id="author-use" class="primary" type="button">Use in runner</button>
+        </div>
+        <div id="author-form" class="author-form"></div>
+        <pre id="author-output" class="output" aria-live="polite"></pre>
+      </div>
+
+      <details class="diagnostics">
+        <summary>Diagnostics</summary>
+        <div class="row">
+          <button id="run-diagnostics" class="secondary" type="button">Run checks</button>
+          <span id="diagnostics-meta" class="meta"></span>
+        </div>
+        <pre id="diagnostics-output" class="output" aria-live="polite"></pre>
+        <p class="meta">The microphone check requests access, then stops the track immediately. Nothing is recorded or sent.</p>
+      </details>
+    </section>
+
+    <section class="panel session-panel" id="session-panel" hidden>
+      <div class="panel-head">
+        <h2 id="session-title">Session</h2>
+        <span id="session-meta" class="meta"></span>
+      </div>
+      <div id="transcript" class="transcript"></div>
+      <div id="event-bar" class="event-bar"></div>
+      <div class="turn-row">
+        <input id="turn-input" type="text" placeholder="Trainee response..." autocomplete="off">
+        <button id="send" class="primary" type="button">Send</button>
+      </div>
+      <div class="row">
+        <button id="finish" class="primary" type="button">Finish &amp; score</button>
+        <button id="download" class="secondary" type="button" disabled>Download report</button>
+      </div>
+      <div id="scorecard" class="scorecard" hidden aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+  <script src="/author.js"></script>
+</body>
+</html>

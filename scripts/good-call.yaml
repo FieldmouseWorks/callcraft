@@ -1,0 +1,16 @@
+scenario: chest-pain-001
+turns:
+  - text: "Nine one one, what's your emergency?"
+  - text: "Okay, I'm going to help you. Where are you located?"
+  - text: "I have 1234 Firwood Lane, Cedar Hollow — is that correct?"
+  - text: "Is there a cross street or landmark nearby?"
+  - text: "What's the best number to reach you?"
+  - text: "555-0142, correct?"
+  - text: "Is anyone there with you?"
+  - text: "Are you awake and alert?"
+  - text: "Are you having trouble breathing?"
+  - text: "Is the front door unlocked?"
+  - text: "Okay, I'm going to give you some instructions to follow while medics are on the way."
+  - event: protocol_card_delivered
+  - event: priority_marked
+  - text: "Stay on the line with me until they arrive, okay?"

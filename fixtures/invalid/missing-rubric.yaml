@@ -1,0 +1,15 @@
+format: callcraft-scenario/v0.1
+id: missing-rubric-001
+title: Missing Rubric
+version: 1.0.0
+license: CC-BY-4.0
+language: en-US
+persona:
+  display_name: Sam
+facts:
+  - id: address
+    value: "1234 Example Lane"
+    disclosure: on_question
+    triggers: [address]
+safety:
+  disclaimer: "Training simulation."

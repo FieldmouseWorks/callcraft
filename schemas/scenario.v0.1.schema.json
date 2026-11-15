@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/FieldmouseWorks/callcraft/schemas/scenario.v0.1.schema.json",
+  "title": "Callcraft scenario v0.1",
+  "type": "object",
+  "required": ["format", "id", "title", "version", "license", "language", "persona", "facts", "rubric", "safety"],
+  "properties": {
+    "format": { "const": "callcraft-scenario/v0.1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "license": { "type": "string", "minLength": 1 },
+    "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+    "incident_type": { "enum": ["medical", "fire", "police", "other"] },
+    "difficulty": { "enum": ["basic", "intermediate", "advanced"] },
+    "duration_minutes": { "type": "number", "exclusiveMinimum": 0 },
+    "authors": { "type": "array", "items": { "type": "string" } },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "persona": {
+      "type": "object",
+      "required": ["display_name"],
+      "properties": {
+        "display_name": { "type": "string" },
+        "age": { "type": "integer", "minimum": 0, "maximum": 120 },
+        "voice": { "type": "object" },
+        "emotional_state": { "type": "string" },
+        "environment": { "type": "object" },
+        "impairments": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "value", "disclosure"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "value": { "type": ["string", "number", "boolean"] },
+          "disclosure": { "enum": ["volunteer", "on_question", "if_asked", "never_unless", "after_event"] },
+          "triggers": { "type": "array", "items": { "type": "string" } },
+          "verifiable": { "type": "boolean" },
+          "requires_event": { "type": "string" }
+        }
+      }
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["at_seconds", "caller_state"],
+        "properties": {
+          "at_seconds": { "type": "number", "minimum": 0 },
+          "caller_state": { "type": "string" }
+        }
+      }
+    },
+    "rubric": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "scoring": { "const": "checklist" },
+        "critical_must_pass": { "type": "boolean" },
+        "human_review_required": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "description", "critical"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+              "description": { "type": "string" },
+              "critical": { "type": "boolean" },
+              "human_review": { "type": ["boolean", "string"] },
+              "evidence_required": { "type": "boolean" },
+              "anchors": { "$ref": "#/$defs/anchors" }
+            }
+          }
+        }
+      }
+    },
+    "geography": {
+      "type": "object",
+      "properties": {
+        "pack": { "type": "string" },
+        "references": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "required": ["disclaimer"],
+      "properties": {
+        "disclaimer": { "type": "string" },
+        "content_warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "xapi": { "type": "object" }
+  },
+  "$defs": {
+    "anchors": {
+      "type": "object",
+      "properties": {
+        "any_of": { "type": "array", "items": { "$ref": "#/$defs/anchor" } },
+        "all_of": { "type": "array", "items": { "$ref": "#/$defs/anchor" } },
+        "transcript_regex": { "type": "string" },
+        "utterance_pair": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+        "event": { "type": "string" }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "transcript_regex": { "type": "string" },
+        "utterance_pair": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+        "event": { "type": "string" }
+      }
+    }
+  },
+  "additionalProperties": true
+}
