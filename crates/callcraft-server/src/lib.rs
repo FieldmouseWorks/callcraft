@@ -518,14 +518,24 @@ fn speaker_label(speaker: Speaker) -> &'static str {
 /// Resolve one trainee utterance, optionally through the LLM decision adapter,
 /// then apply it under a short lock. The model never writes caller text; it
 /// selects fact ids, and rendering happens here from the fact base.
-async fn produce_turn(state: &AppState, id: &str, text: &str) -> Result<TurnOutcome, Response> {
+async fn produce_turn(
+    state: &AppState,
+    id: &str,
+    text: &str,
+) -> Result<TurnOutcome, Box<Response>> {
     let (scenario, transcript, events, disclosed, elapsed_s) = {
         let sessions = state.sessions.lock().expect("sessions lock");
         let Some(stored) = sessions.get(id) else {
-            return Err(error_response(StatusCode::NOT_FOUND, "session not found"));
+            return Err(Box::new(error_response(
+                StatusCode::NOT_FOUND,
+                "session not found",
+            )));
         };
         if stored.finished {
-            return Err(error_response(StatusCode::CONFLICT, "session is finished"));
+            return Err(Box::new(error_response(
+                StatusCode::CONFLICT,
+                "session is finished",
+            )));
         }
         let transcript = stored
             .session
@@ -589,10 +599,16 @@ async fn produce_turn(state: &AppState, id: &str, text: &str) -> Result<TurnOutc
 
     let mut sessions = state.sessions.lock().expect("sessions lock");
     let Some(stored) = sessions.get_mut(id) else {
-        return Err(error_response(StatusCode::NOT_FOUND, "session not found"));
+        return Err(Box::new(error_response(
+            StatusCode::NOT_FOUND,
+            "session not found",
+        )));
     };
     if stored.finished {
-        return Err(error_response(StatusCode::CONFLICT, "session is finished"));
+        return Err(Box::new(error_response(
+            StatusCode::CONFLICT,
+            "session is finished",
+        )));
     }
     if drift {
         stored.session.drift_rejections += 1;
@@ -649,7 +665,7 @@ async fn turn(
 
     let outcome = match produce_turn(&state, &id, text).await {
         Ok(outcome) => outcome,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     Json(json!({
         "ok": true,
@@ -789,7 +805,7 @@ async fn voice_turn(
 
     let outcome = match produce_turn(&state, &id, &transcript).await {
         Ok(outcome) => outcome,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     let mut payload = json!({
