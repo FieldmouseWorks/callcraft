@@ -6,6 +6,7 @@
 //! config file.
 
 pub mod anthropic;
+pub mod http;
 pub mod openai_compatible;
 
 use std::env;
@@ -14,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 use serde::{Deserialize, Serialize};
+
+pub use http::{audio_filename, request_timeout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -195,6 +198,11 @@ impl CallerConfig {
 
     /// Load environment first, then the stored config and its key.
     pub fn load(store: &SettingsStore) -> Self {
+        if let Some(provider_id) = env_string("CALLCRAFT_CALLER_PROVIDER")
+            && find(&provider_id).is_none()
+        {
+            return Self::default();
+        }
         if let Some(config) = Self::from_env() {
             return config;
         }
@@ -210,7 +218,9 @@ impl CallerConfig {
             } else {
                 stored.base_url
             };
+            let env_provider = env_string("CALLCRAFT_CALLER_PROVIDER");
             let api_key = env_string("CALLCRAFT_CALLER_API_KEY")
+                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
                 .or_else(|| store.load_key(&stored.provider_id));
             return Self {
                 provider_id: Some(stored.provider_id),
@@ -246,6 +256,7 @@ pub fn config_from_request(
         .filter(|value| !value.is_empty())
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .ok_or_else(|| format!("{} requires a base URL", manifest.label))?;
+    ensure_safe_base_url(&base_url)?;
     let model = model
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -278,12 +289,58 @@ impl ProviderError {
     }
 }
 
+/// Reject plaintext HTTP for non-local provider endpoints. Local runners and
+/// private-network gateways are allowed; a remote provider must use HTTPS
+/// unless an operator explicitly opts out.
+/// Compare provider base URLs without trailing slashes.
+pub fn same_base(left: &str, right: &str) -> bool {
+    let left = left.trim_end_matches('/');
+    let right = right.trim_end_matches('/');
+    !left.is_empty() && left.eq_ignore_ascii_case(right)
+}
+
+pub fn ensure_safe_base_url(base_url: &str) -> Result<(), String> {
+    let url = url::Url::parse(base_url).map_err(|error| format!("invalid base URL: {error}"))?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            if env_string("CALLCRAFT_ALLOW_INSECURE_ADAPTERS").as_deref() == Some("1") {
+                return Ok(());
+            }
+            let host = url.host_str().unwrap_or_default();
+            if is_loopback_or_private(host) {
+                Ok(())
+            } else {
+                Err("non-loopback provider endpoints must use https (set CALLCRAFT_ALLOW_INSECURE_ADAPTERS=1 to override)".to_string())
+            }
+        }
+        other => Err(format!("unsupported provider URL scheme '{other}'")),
+    }
+}
+
+fn is_loopback_or_private(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let host = host.trim_matches(['[', ']']);
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => address.is_loopback() || address.is_private(),
+        Ok(std::net::IpAddr::V6(address)) => {
+            address.is_loopback()
+                || (address.segments()[0] & 0xfe00) == 0xfc00
+                || (address.segments()[0] & 0xffc0) == 0xfe80
+        }
+        Err(_) => false,
+    }
+}
+
 pub async fn complete(
     client: &reqwest::Client,
     config: &CallerConfig,
     system: &str,
     user: &str,
 ) -> Result<String, ProviderError> {
+    ensure_safe_base_url(&config.base_url).map_err(ProviderError::Invalid)?;
     match config.kind {
         Some(ProviderKind::OpenAiCompatible) | Some(ProviderKind::OpenAi) => {
             openai_compatible::complete(client, config, system, user).await

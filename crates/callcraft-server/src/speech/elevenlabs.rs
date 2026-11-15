@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{SpeechError, SttConfig, TtsConfig};
+use crate::providers::http;
 
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
@@ -21,16 +22,23 @@ pub async fn transcribe(
         .filter(|key| !key.trim().is_empty())
         .ok_or_else(|| SpeechError::Invalid("ElevenLabs requires an API key".to_string()))?;
     let part = reqwest::multipart::Part::bytes(audio.to_vec())
-        .file_name("turn.webm")
+        .file_name(crate::providers::audio_filename(mime))
         .mime_str(mime)
         .map_err(|error| SpeechError::Invalid(format!("audio part: {error}")))?;
-    let form = reqwest::multipart::Form::new()
+    let mut form = reqwest::multipart::Form::new()
         .part("file", part)
         .text("model_id", config.model.clone());
+    if let Some(language) = &config.language {
+        form = form.text("language_code", language.clone());
+    }
     let response = client
-        .post(endpoint(&config.base_url, "speech-to-text"))
+        .post(http::endpoint(&config.base_url, "speech-to-text"))
         .header("xi-api-key", api_key)
         .multipart(form)
+        .timeout(crate::providers::request_timeout(
+            "CALLCRAFT_STT_TIMEOUT_MS",
+            8000,
+        ))
         .send()
         .await
         .map_err(|error| {
@@ -41,7 +49,7 @@ pub async fn transcribe(
         let body = response.text().await.unwrap_or_default();
         return Err(SpeechError::Transport(format!(
             "ElevenLabs STT returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
     let payload: TranscriptionResponse = response
@@ -76,13 +84,20 @@ pub async fn synthesize(
         ));
     };
     let response = client
-        .post(format!("{}/text-to-speech/{voice}", base(&config.base_url)))
+        .post(http::endpoint(
+            &config.base_url,
+            &format!("text-to-speech/{voice}"),
+        ))
         .header("xi-api-key", api_key)
         .header("accept", "audio/mpeg")
         .json(&json!({
             "text": text,
             "model_id": config.model,
         }))
+        .timeout(crate::providers::request_timeout(
+            "CALLCRAFT_TTS_TIMEOUT_MS",
+            8000,
+        ))
         .send()
         .await
         .map_err(|error| {
@@ -93,7 +108,7 @@ pub async fn synthesize(
         let body = response.text().await.unwrap_or_default();
         return Err(SpeechError::Transport(format!(
             "ElevenLabs TTS returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
     let mime = response
@@ -113,21 +128,4 @@ pub async fn synthesize(
         ));
     }
     Ok((audio, mime))
-}
-
-fn base(base_url: &str) -> String {
-    let base_url = base_url.trim_end_matches('/');
-    if base_url.ends_with("/v1") {
-        base_url.to_string()
-    } else {
-        format!("{base_url}/v1")
-    }
-}
-
-fn endpoint(base_url: &str, path: &str) -> String {
-    format!("{}/{path}", base(base_url))
-}
-
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
 }

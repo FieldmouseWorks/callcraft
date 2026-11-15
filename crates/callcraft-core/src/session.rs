@@ -20,11 +20,18 @@ pub struct Utterance {
     pub fact_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageLatency {
+    pub stage: String,
+    pub ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SessionItem {
     Utterance(Utterance),
     Event { name: String },
+    Latency(StageLatency),
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +42,7 @@ pub struct Session {
     pub started_at: String,
     pub items: Vec<SessionItem>,
     pub drift_rejections: u32,
+    pub adapter_failures: u32,
     next_id: u64,
 }
 
@@ -61,6 +69,7 @@ impl Session {
             started_at,
             items: Vec::new(),
             drift_rejections: 0,
+            adapter_failures: 0,
             next_id: 0,
         }
     }
@@ -92,17 +101,29 @@ impl Session {
         self.items.push(SessionItem::Event { name });
     }
 
+    pub fn add_latency(&mut self, stage: String, ms: u64) {
+        self.items
+            .push(SessionItem::Latency(StageLatency { stage, ms }));
+    }
+
     pub fn transcript(&self) -> impl Iterator<Item = &Utterance> {
         self.items.iter().filter_map(|item| match item {
             SessionItem::Utterance(utterance) => Some(utterance),
-            SessionItem::Event { .. } => None,
+            SessionItem::Event { .. } | SessionItem::Latency(_) => None,
         })
     }
 
     pub fn events(&self) -> impl Iterator<Item = &str> {
         self.items.iter().filter_map(|item| match item {
             SessionItem::Event { name } => Some(name.as_str()),
-            SessionItem::Utterance(_) => None,
+            SessionItem::Utterance(_) | SessionItem::Latency(_) => None,
+        })
+    }
+
+    pub fn latencies(&self) -> impl Iterator<Item = &StageLatency> {
+        self.items.iter().filter_map(|item| match item {
+            SessionItem::Latency(latency) => Some(latency),
+            SessionItem::Utterance(_) | SessionItem::Event { .. } => None,
         })
     }
 }

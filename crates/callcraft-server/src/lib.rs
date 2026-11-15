@@ -56,6 +56,9 @@ struct StoredSession {
     engine: CallerEngine,
     started: Instant,
     finished: bool,
+    caller_failures: u32,
+    caller_disabled: bool,
+    turn_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Start the loopback server on a background thread.
@@ -213,10 +216,7 @@ async fn example() -> Json<serde_json::Value> {
 }
 
 #[derive(Debug, Deserialize, Default)]
-struct TokenQuery {
-    #[serde(default)]
-    token: Option<String>,
-}
+struct TokenQuery {}
 
 #[derive(Debug, Deserialize)]
 struct TurnPayload {
@@ -248,18 +248,28 @@ fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"ok": false, "error": message}))).into_response()
 }
 
-fn authorized(headers: &HeaderMap, query: &TokenQuery, state: &AppState) -> bool {
+fn authorized(headers: &HeaderMap, _query: &TokenQuery, state: &AppState) -> bool {
     let host_ok = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-        .map(|host| host.starts_with("127.0.0.1") || host.starts_with("localhost"))
+        .map(host_allowed)
         .unwrap_or(false);
     let header_token = headers
         .get("x-callcraft-token")
         .and_then(|value| value.to_str().ok());
-    let token_ok = header_token == Some(state.token.as_str())
-        || query.token.as_deref() == Some(state.token.as_str());
-    host_ok && token_ok
+    host_ok && header_token == Some(state.token.as_str())
+}
+
+fn host_allowed(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.');
+    let name = if let Some(rest) = host.strip_prefix('[') {
+        rest.split(']').next().unwrap_or_default()
+    } else if host.matches(':').count() == 1 {
+        host.split(':').next().unwrap_or(host)
+    } else {
+        host
+    };
+    matches!(name, "127.0.0.1" | "localhost" | "::1")
 }
 
 fn auth_guard(state: &AppState, headers: &HeaderMap, query: &TokenQuery) -> Option<Response> {
@@ -430,6 +440,9 @@ async fn create_session(
                 engine,
                 started: Instant::now(),
                 finished: false,
+                caller_failures: 0,
+                caller_disabled: false,
+                turn_lock: Arc::new(tokio::sync::Mutex::new(())),
             },
         );
     }
@@ -492,6 +505,13 @@ struct TurnOutcome {
     events: Vec<String>,
 }
 
+fn record_latency(state: &AppState, id: &str, stage: &str, ms: u64) {
+    let mut sessions = state.sessions.lock().expect("sessions lock");
+    if let Some(stored) = sessions.get_mut(id) {
+        stored.session.add_latency(stage.to_string(), ms);
+    }
+}
+
 fn speaker_label(speaker: Speaker) -> &'static str {
     match speaker {
         Speaker::Trainee => "Trainee",
@@ -507,7 +527,19 @@ async fn produce_turn(
     id: &str,
     text: &str,
 ) -> Result<TurnOutcome, Box<Response>> {
-    let (scenario, transcript, events, disclosed, elapsed_s) = {
+    let turn_lock = {
+        let sessions = state.sessions.lock().expect("sessions lock");
+        let Some(stored) = sessions.get(id) else {
+            return Err(Box::new(error_response(
+                StatusCode::NOT_FOUND,
+                "session not found",
+            )));
+        };
+        stored.turn_lock.clone()
+    };
+    let _turn_guard = turn_lock.lock().await;
+
+    let (scenario, transcript, events, disclosed, elapsed_s, caller_disabled) = {
         let sessions = state.sessions.lock().expect("sessions lock");
         let Some(stored) = sessions.get(id) else {
             return Err(Box::new(error_response(
@@ -547,15 +579,21 @@ async fn produce_turn(
             events,
             disclosed,
             stored.started.elapsed().as_secs_f64(),
+            stored.caller_disabled,
         )
     };
+    let first_caller_turn = transcript
+        .iter()
+        .all(|(speaker, _)| speaker.as_str() != "Caller");
 
     let mut llm_reply: Option<(String, Vec<String>)> = None;
     let mut caller_error: Option<String> = None;
-    let mut drift = false;
+    let mut decision_drift = false;
+    let mut adapter_failure = false;
+    let mut transport_failure = false;
 
     let caller_config = state.caller.lock().expect("caller lock").clone();
-    if caller_config.is_enabled() {
+    if caller_config.is_enabled() && !caller_disabled {
         match caller_llm::decide(
             &state.http,
             &caller_config,
@@ -568,15 +606,27 @@ async fn produce_turn(
         )
         .await
         {
-            Ok(decision) => match caller_llm::render(&decision, &scenario, &events) {
+            Ok(decision) => match caller_llm::render(
+                &decision,
+                &scenario,
+                &events,
+                text,
+                &disclosed,
+                elapsed_s,
+                first_caller_turn,
+            ) {
                 Ok((reply, fact_ids)) => llm_reply = Some((reply, fact_ids)),
                 Err(error) => {
-                    drift = error.is_invalid();
+                    decision_drift = error.is_decision();
+                    adapter_failure = error.is_adapter();
+                    transport_failure = error.is_transport();
                     caller_error = Some(error.message().to_string());
                 }
             },
             Err(error) => {
-                drift = error.is_invalid();
+                decision_drift = error.is_decision();
+                adapter_failure = error.is_adapter();
+                transport_failure = error.is_transport();
                 caller_error = Some(error.message().to_string());
             }
         }
@@ -595,8 +645,23 @@ async fn produce_turn(
             "session is finished",
         )));
     }
-    if drift {
+    if decision_drift {
         stored.session.drift_rejections += 1;
+    }
+    if adapter_failure {
+        stored.session.adapter_failures += 1;
+    }
+    if transport_failure {
+        stored.caller_failures = stored.caller_failures.saturating_add(1);
+        if stored.caller_failures >= 3 {
+            stored.caller_disabled = true;
+            caller_error =
+                Some("caller provider disabled after repeated transport failures".to_string());
+        }
+    }
+    if llm_reply.is_some() {
+        stored.caller_failures = 0;
+        stored.caller_disabled = false;
     }
 
     let t_ms = stored.started.elapsed().as_millis() as u64;
@@ -605,6 +670,7 @@ async fn produce_turn(
         .add_utterance(Speaker::Trainee, text.to_string(), t_ms, Vec::new());
     let (caller, source, fact_ids) = match llm_reply {
         Some((reply, fact_ids)) => {
+            stored.engine.mark_volunteered();
             for fact_id in &fact_ids {
                 stored.engine.mark_disclosed(fact_id);
             }
@@ -648,10 +714,12 @@ async fn turn(
         return error_response(StatusCode::BAD_REQUEST, "text is empty");
     }
 
+    let started = Instant::now();
     let outcome = match produce_turn(&state, &id, text).await {
         Ok(outcome) => outcome,
         Err(response) => return *response,
     };
+    record_latency(&state, &id, "turn", started.elapsed().as_millis() as u64);
     Json(json!({
         "ok": true,
         "caller": outcome.caller,
@@ -783,7 +851,10 @@ async fn voice_turn(
         }
     }
 
-    let transcript = match speech::transcribe(&state.http, &stt_config, &mime, &body).await {
+    let stt_started = Instant::now();
+    let stt_result = speech::transcribe(&state.http, &stt_config, &mime, &body).await;
+    record_latency(&state, &id, "stt", stt_started.elapsed().as_millis() as u64);
+    let transcript = match stt_result {
         Ok(text) => text,
         Err(error) => return error_response(StatusCode::BAD_GATEWAY, error.message()),
     };
@@ -792,10 +863,17 @@ async fn voice_turn(
         return error_response(StatusCode::UNPROCESSABLE_ENTITY, "no speech detected");
     }
 
+    let turn_started = Instant::now();
     let outcome = match produce_turn(&state, &id, &transcript).await {
         Ok(outcome) => outcome,
         Err(response) => return *response,
     };
+    record_latency(
+        &state,
+        &id,
+        "turn",
+        turn_started.elapsed().as_millis() as u64,
+    );
 
     let mut payload = json!({
         "ok": true,
@@ -806,7 +884,10 @@ async fn voice_turn(
     });
 
     if let Some(tts_config) = speech.tts.clone() {
-        match speech::synthesize(&state.http, &tts_config, &outcome.caller).await {
+        let tts_started = Instant::now();
+        let tts_result = speech::synthesize(&state.http, &tts_config, &outcome.caller).await;
+        record_latency(&state, &id, "tts", tts_started.elapsed().as_millis() as u64);
+        match tts_result {
             Ok((audio, audio_mime)) => {
                 payload["audio_base64"] =
                     json!(base64::engine::general_purpose::STANDARD.encode(audio));
@@ -855,28 +936,62 @@ fn speech_key(
     kind: speech::SpeechKind,
     provider_id: &str,
     provided: Option<String>,
+    requested_base_url: Option<&str>,
 ) -> Option<String> {
     let namespace = match kind {
         speech::SpeechKind::Stt => "stt",
         speech::SpeechKind::Tts => "tts",
     };
-    provided
-        .or_else(|| state.settings.load_key_ns(namespace, provider_id))
-        .or_else(|| {
-            let speech = state.speech.lock().expect("speech lock");
-            match kind {
-                speech::SpeechKind::Stt => speech
-                    .stt
-                    .as_ref()
-                    .filter(|config| config.provider_id.as_deref() == Some(provider_id))
-                    .and_then(|config| config.api_key.clone()),
-                speech::SpeechKind::Tts => speech
-                    .tts
-                    .as_ref()
-                    .filter(|config| config.provider_id.as_deref() == Some(provider_id))
-                    .and_then(|config| config.api_key.clone()),
-            }
-        })
+    let requested = requested_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let current_key = {
+        let speech = state.speech.lock().expect("speech lock");
+        match kind {
+            speech::SpeechKind::Stt => speech
+                .stt
+                .as_ref()
+                .filter(|config| config.provider_id.as_deref() == Some(provider_id))
+                .filter(|config| {
+                    requested.is_none_or(|base| providers::same_base(&config.base_url, base))
+                })
+                .and_then(|config| config.api_key.clone()),
+            speech::SpeechKind::Tts => speech
+                .tts
+                .as_ref()
+                .filter(|config| config.provider_id.as_deref() == Some(provider_id))
+                .filter(|config| {
+                    requested.is_none_or(|base| providers::same_base(&config.base_url, base))
+                })
+                .and_then(|config| config.api_key.clone()),
+        }
+    };
+    if let Some(key) = provided.or(current_key) {
+        return Some(key);
+    }
+
+    let stored = state.settings.load_speech()?;
+    let stored_matches = match kind {
+        speech::SpeechKind::Stt => stored
+            .stt
+            .as_ref()
+            .filter(|config| config.provider_id == provider_id)
+            .is_some_and(|config| {
+                requested.is_none_or(|base| providers::same_base(&config.base_url, base))
+            }),
+        speech::SpeechKind::Tts => stored
+            .tts
+            .as_ref()
+            .filter(|config| config.provider_id == provider_id)
+            .is_some_and(|config| {
+                requested.is_none_or(|base| providers::same_base(&config.base_url, base))
+            }),
+    };
+    if !stored_matches {
+        return None;
+    }
+    state.settings.load_key_ns(namespace, provider_id)
 }
 
 fn active_speech(state: &AppState) -> serde_json::Value {
@@ -930,7 +1045,13 @@ async fn speech_test(
         return response;
     }
     let provided = provided_speech_key(&payload);
-    let api_key = speech_key(&state, payload.kind, &payload.provider_id, provided);
+    let api_key = speech_key(
+        &state,
+        payload.kind,
+        &payload.provider_id,
+        provided,
+        payload.base_url.as_deref(),
+    );
     let started = Instant::now();
 
     match payload.kind {
@@ -945,7 +1066,13 @@ async fn speech_test(
                 Ok(config) => config,
                 Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
             };
-            match speech::transcribe(&state.http, &config, "audio/wav", speech::STT_TEST_WAV).await
+            match speech::transcribe(
+                &state.http,
+                &config,
+                speech::STT_TEST_MIME,
+                speech::STT_TEST_AUDIO,
+            )
+            .await
             {
                 Ok(transcript) => Json(json!({
                     "ok": true,
@@ -1012,9 +1139,43 @@ async fn speech_configure(
         return response;
     }
     let provided = provided_speech_key(&payload);
-    let api_key = speech_key(&state, payload.kind, &payload.provider_id, provided.clone());
-    let mut stored = state.settings.load_speech().unwrap_or_default();
+    let api_key = speech_key(
+        &state,
+        payload.kind,
+        &payload.provider_id,
+        provided.clone(),
+        payload.base_url.as_deref(),
+    );
 
+    enum NewConfig {
+        Stt(speech::SttConfig),
+        Tts(speech::TtsConfig),
+    }
+
+    let new_config = match payload.kind {
+        speech::SpeechKind::Stt => match speech::stt_from_request(
+            &payload.provider_id,
+            payload.base_url.clone(),
+            payload.model.clone(),
+            payload.language.clone(),
+            api_key,
+        ) {
+            Ok(config) => NewConfig::Stt(config),
+            Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+        },
+        speech::SpeechKind::Tts => match speech::tts_from_request(
+            &payload.provider_id,
+            payload.base_url.clone(),
+            payload.model.clone(),
+            payload.voice.clone(),
+            api_key,
+        ) {
+            Ok(config) => NewConfig::Tts(config),
+            Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
+        },
+    };
+
+    let mut stored = state.settings.load_speech().unwrap_or_default();
     let namespace = match payload.kind {
         speech::SpeechKind::Stt => "stt",
         speech::SpeechKind::Tts => "tts",
@@ -1027,52 +1188,36 @@ async fn speech_configure(
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
     }
 
-    match payload.kind {
-        speech::SpeechKind::Stt => {
-            let config = match speech::stt_from_request(
-                &payload.provider_id,
-                payload.base_url.clone(),
-                payload.model.clone(),
-                payload.language.clone(),
-                api_key,
-            ) {
-                Ok(config) => config,
-                Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
-            };
+    match &new_config {
+        NewConfig::Stt(config) => {
             stored.stt = Some(providers::StoredStt {
                 provider_id: payload.provider_id.clone(),
                 base_url: config.base_url.clone(),
                 model: config.model.clone(),
                 language: config.language.clone().unwrap_or_default(),
             });
-            let mut speech = state.speech.lock().expect("speech lock");
-            speech.stt = Some(config);
         }
-        speech::SpeechKind::Tts => {
-            let config = match speech::tts_from_request(
-                &payload.provider_id,
-                payload.base_url.clone(),
-                payload.model.clone(),
-                payload.voice.clone(),
-                api_key,
-            ) {
-                Ok(config) => config,
-                Err(error) => return error_response(StatusCode::BAD_REQUEST, &error),
-            };
+        NewConfig::Tts(config) => {
             stored.tts = Some(providers::StoredTts {
                 provider_id: payload.provider_id.clone(),
                 base_url: config.base_url.clone(),
                 model: config.model.clone(),
                 voice: config.voice.clone().unwrap_or_default(),
             });
-            let mut speech = state.speech.lock().expect("speech lock");
-            speech.tts = Some(config);
         }
     }
 
     if let Err(error) = state.settings.save_speech(&stored) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, &error);
     }
+
+    let mut speech = state.speech.lock().expect("speech lock");
+    match new_config {
+        NewConfig::Stt(config) => speech.stt = Some(config),
+        NewConfig::Tts(config) => speech.tts = Some(config),
+    }
+    drop(speech);
+
     Json(json!({
         "ok": true,
         "active": active_speech(&state),
@@ -1134,15 +1279,38 @@ fn provided_api_key(payload: &ProviderPayload) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn stored_api_key(state: &AppState, provider_id: &str) -> Option<String> {
-    state.settings.load_key(provider_id).or_else(|| {
+fn stored_api_key(
+    state: &AppState,
+    provider_id: &str,
+    requested_base_url: Option<&str>,
+) -> Option<String> {
+    let requested = requested_base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let current_key = {
         let caller = state.caller.lock().expect("caller lock");
-        if caller.provider_id.as_deref() == Some(provider_id) {
-            caller.api_key.clone()
-        } else {
-            None
-        }
-    })
+        caller
+            .provider_id
+            .as_deref()
+            .filter(|id| *id == provider_id)
+            .filter(|_| requested.is_none_or(|base| providers::same_base(&caller.base_url, base)))
+            .and_then(|_| caller.api_key.clone())
+    };
+    if current_key.is_some() {
+        return current_key;
+    }
+
+    let stored = state.settings.load()?;
+    if stored.provider_id != provider_id {
+        return None;
+    }
+    if let Some(base) = requested
+        && !providers::same_base(&stored.base_url, base)
+    {
+        return None;
+    }
+    state.settings.load_key(provider_id)
 }
 
 fn active_provider(state: &AppState) -> serde_json::Value {
@@ -1186,8 +1354,8 @@ async fn provider_test(
     if let Some(response) = auth_guard(&state, &headers, &query) {
         return response;
     }
-    let api_key =
-        provided_api_key(&payload).or_else(|| stored_api_key(&state, &payload.provider_id));
+    let api_key = provided_api_key(&payload)
+        .or_else(|| stored_api_key(&state, &payload.provider_id, payload.base_url.as_deref()));
     let config = match providers::config_from_request(
         &payload.provider_id,
         payload.base_url.clone(),
@@ -1220,7 +1388,15 @@ async fn provider_test(
     )
     .await
     {
-        Ok(decision) => match caller_llm::render(&decision, &scenario, &[]) {
+        Ok(decision) => match caller_llm::render(
+            &decision,
+            &scenario,
+            &[],
+            "Where are you located?",
+            &[],
+            0.0,
+            true,
+        ) {
             Ok((caller, fact_ids)) => Json(json!({
                 "ok": true,
                 "provider_id": config.provider_id,
@@ -1272,7 +1448,7 @@ async fn provider_configure(
     let provided_key = provided_api_key(&payload);
     let api_key = provided_key
         .clone()
-        .or_else(|| stored_api_key(&state, &payload.provider_id));
+        .or_else(|| stored_api_key(&state, &payload.provider_id, payload.base_url.as_deref()));
     let config = match providers::config_from_request(
         &payload.provider_id,
         payload.base_url.clone(),
@@ -1298,6 +1474,13 @@ async fn provider_configure(
     }
 
     *state.caller.lock().expect("caller lock") = config;
+    {
+        let mut sessions = state.sessions.lock().expect("sessions lock");
+        for stored in sessions.values_mut() {
+            stored.caller_failures = 0;
+            stored.caller_disabled = false;
+        }
+    }
     Json(json!({
         "ok": true,
         "active": active_provider(&state),

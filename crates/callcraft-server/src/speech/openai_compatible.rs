@@ -2,6 +2,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{SpeechError, SttConfig, TtsConfig};
+use crate::providers::http;
 
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
@@ -21,7 +22,7 @@ pub async fn transcribe(
         ));
     }
     let part = reqwest::multipart::Part::bytes(audio.to_vec())
-        .file_name("turn.webm")
+        .file_name(crate::providers::audio_filename(mime))
         .mime_str(mime)
         .map_err(|error| SpeechError::Invalid(format!("audio part: {error}")))?;
     let mut form = reqwest::multipart::Form::new()
@@ -31,7 +32,7 @@ pub async fn transcribe(
         form = form.text("language", language.clone());
     }
     let mut request = client
-        .post(endpoint(&config.base_url, "audio/transcriptions"))
+        .post(http::endpoint(&config.base_url, "audio/transcriptions"))
         .multipart(form);
     if let Some(api_key) = config
         .api_key
@@ -48,7 +49,7 @@ pub async fn transcribe(
         let body = response.text().await.unwrap_or_default();
         return Err(SpeechError::Transport(format!(
             "speech-to-text returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
     let payload: TranscriptionResponse = response
@@ -74,7 +75,7 @@ pub async fn synthesize(
         ));
     }
     let mut request = client
-        .post(endpoint(&config.base_url, "audio/speech"))
+        .post(http::endpoint(&config.base_url, "audio/speech"))
         .json(&json!({
             "model": config.model,
             "input": text,
@@ -96,7 +97,7 @@ pub async fn synthesize(
         let body = response.text().await.unwrap_or_default();
         return Err(SpeechError::Transport(format!(
             "text-to-speech returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
     let mime = response
@@ -116,17 +117,4 @@ pub async fn synthesize(
         ));
     }
     Ok((audio, mime))
-}
-
-fn endpoint(base_url: &str, path: &str) -> String {
-    let base_url = base_url.trim_end_matches('/');
-    if base_url.ends_with("/v1") {
-        format!("{base_url}/{path}")
-    } else {
-        format!("{base_url}/v1/{path}")
-    }
-}
-
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
 }

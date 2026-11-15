@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::eventlog::session_id;
 use crate::scenario::{FORMAT_VERSION, Scenario};
 use crate::scoring::Evaluation;
-use crate::session::{Session, Utterance};
+use crate::session::{Session, StageLatency, Utterance};
 
 #[derive(Debug, Serialize)]
 pub struct Cost {
@@ -30,6 +30,7 @@ pub struct Report {
     pub transcript: Vec<Utterance>,
     pub events: Vec<String>,
     pub evaluation: Evaluation,
+    pub stages: Vec<StageLatency>,
     pub cost: Cost,
     pub latency_ms: Latency,
 }
@@ -40,6 +41,11 @@ pub fn build(
     evaluation: Evaluation,
     log_jsonl: &str,
 ) -> Report {
+    let latencies = session
+        .latencies()
+        .map(|latency| latency.ms)
+        .collect::<Vec<_>>();
+
     Report {
         format_version: FORMAT_VERSION.to_string(),
         scenario_id: scenario.id.clone(),
@@ -50,6 +56,7 @@ pub fn build(
         transcript: session.transcript().cloned().collect(),
         events: session.events().map(str::to_string).collect(),
         evaluation,
+        stages: session.latencies().cloned().collect(),
         cost: Cost {
             stt_usd: 0.0,
             llm_usd: 0.0,
@@ -57,12 +64,22 @@ pub fn build(
             total_usd: 0.0,
         },
         latency_ms: Latency {
-            p50_ms: None,
-            p95_ms: None,
+            p50_ms: percentile_ms(&latencies, 0.50),
+            p95_ms: percentile_ms(&latencies, 0.95),
         },
     }
 }
 
 pub fn to_json(report: &Report) -> String {
     serde_json::to_string_pretty(report).expect("report serializes")
+}
+
+fn percentile_ms(values: &[u64], percentile: f64) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let index = ((sorted.len() - 1) as f64 * percentile).round() as usize;
+    sorted.get(index).copied()
 }

@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use super::{SpeechError, SttConfig};
+use crate::providers::http;
 
 #[derive(Debug, Deserialize)]
 struct ListenResponse {
@@ -36,16 +37,26 @@ pub async fn transcribe(
         .as_deref()
         .filter(|key| !key.trim().is_empty())
         .ok_or_else(|| SpeechError::Invalid("Deepgram requires an API key".to_string()))?;
+    let language = config
+        .language
+        .as_ref()
+        .map(|language| format!("&language={language}"))
+        .unwrap_or_default();
     let url = format!(
-        "{}/listen?model={}&smart_format=true",
-        base(&config.base_url),
-        config.model
+        "{}/listen?model={}&smart_format=true{}",
+        http::base(&config.base_url),
+        config.model,
+        language
     );
     let response = client
         .post(url)
         .header("Authorization", format!("Token {api_key}"))
         .header("Content-Type", mime)
         .body(audio.to_vec())
+        .timeout(crate::providers::request_timeout(
+            "CALLCRAFT_STT_TIMEOUT_MS",
+            8000,
+        ))
         .send()
         .await
         .map_err(|error| SpeechError::Transport(format!("Deepgram request failed: {error}")))?;
@@ -54,7 +65,7 @@ pub async fn transcribe(
         let body = response.text().await.unwrap_or_default();
         return Err(SpeechError::Transport(format!(
             "Deepgram returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
     let payload: ListenResponse = response
@@ -74,17 +85,4 @@ pub async fn transcribe(
         ));
     }
     Ok(transcript)
-}
-
-fn base(base_url: &str) -> String {
-    let base_url = base_url.trim_end_matches('/');
-    if base_url.ends_with("/v1") {
-        base_url.to_string()
-    } else {
-        format!("{base_url}/v1")
-    }
-}
-
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
 }

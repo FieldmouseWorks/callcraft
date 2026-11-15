@@ -26,18 +26,29 @@ pub struct Decision {
 #[derive(Debug)]
 pub enum CallerError {
     Transport(String),
-    Invalid(String),
+    Adapter(String),
+    Decision(String),
 }
 
 impl CallerError {
     pub fn message(&self) -> &str {
         match self {
-            CallerError::Transport(message) | CallerError::Invalid(message) => message,
+            CallerError::Transport(message)
+            | CallerError::Adapter(message)
+            | CallerError::Decision(message) => message,
         }
     }
 
-    pub fn is_invalid(&self) -> bool {
-        matches!(self, CallerError::Invalid(_))
+    pub fn is_transport(&self) -> bool {
+        matches!(self, CallerError::Transport(_))
+    }
+
+    pub fn is_adapter(&self) -> bool {
+        matches!(self, CallerError::Adapter(_))
+    }
+
+    pub fn is_decision(&self) -> bool {
+        matches!(self, CallerError::Decision(_))
     }
 }
 
@@ -57,7 +68,7 @@ pub async fn decide(
         .await
         .map_err(|error| match error {
             ProviderError::Transport(message) => CallerError::Transport(message),
-            ProviderError::Invalid(message) => CallerError::Invalid(message),
+            ProviderError::Invalid(message) => CallerError::Adapter(message),
         })?;
     parse_decision(&content)
 }
@@ -65,12 +76,12 @@ pub async fn decide(
 fn parse_decision(content: &str) -> Result<Decision, CallerError> {
     let start = content
         .find('{')
-        .ok_or_else(|| CallerError::Invalid("caller returned no JSON".to_string()))?;
+        .ok_or_else(|| CallerError::Adapter("caller returned no JSON".to_string()))?;
     let end = content
         .rfind('}')
-        .ok_or_else(|| CallerError::Invalid("caller returned no JSON".to_string()))?;
+        .ok_or_else(|| CallerError::Adapter("caller returned no JSON".to_string()))?;
     serde_json::from_str(&content[start..=end])
-        .map_err(|error| CallerError::Invalid(format!("caller JSON: {error}")))
+        .map_err(|error| CallerError::Adapter(format!("caller JSON: {error}")))
 }
 
 /// Render a decision into caller speech. Every content word comes from the
@@ -79,47 +90,79 @@ pub fn render(
     decision: &Decision,
     scenario: &Scenario,
     events: &[String],
+    latest: &str,
+    disclosed: &[String],
+    elapsed_s: f64,
+    first_caller_turn: bool,
 ) -> Result<(String, Vec<String>), CallerError> {
     if decision.fact_ids.len() > 2 {
-        return Err(CallerError::Invalid(
+        return Err(CallerError::Decision(
             "caller selected more than two facts".to_string(),
         ));
     }
 
-    let style = match decision.style.as_deref().unwrap_or("neutral") {
-        "anxious" => "anxious",
-        "distressed" => "distressed",
-        "repeat" => "repeat",
-        _ => "neutral",
-    };
-
+    let model_style = normalize_style(decision.style.as_deref());
+    let latest_norm = normalize(latest);
     let mut ids = Vec::new();
     let mut values = Vec::new();
+
     for fact_id in &decision.fact_ids {
         let Some(fact) = scenario.facts.iter().find(|fact| &fact.id == fact_id) else {
-            return Err(CallerError::Invalid(format!(
+            return Err(CallerError::Decision(format!(
                 "caller selected unknown fact '{fact_id}'"
             )));
         };
-        if fact.disclosure == Disclosure::AfterEvent {
-            let ready = fact
-                .requires_event
-                .as_ref()
-                .map(|event| events.iter().any(|recorded| recorded == event))
-                .unwrap_or(false);
-            if !ready {
-                return Err(CallerError::Invalid(format!(
-                    "caller selected fact '{fact_id}' before its required event"
+        match fact.disclosure {
+            Disclosure::AfterEvent => {
+                let ready = fact
+                    .requires_event
+                    .as_ref()
+                    .map(|event| events.iter().any(|recorded| recorded == event))
+                    .unwrap_or(false);
+                if !ready {
+                    return Err(CallerError::Decision(format!(
+                        "caller selected fact '{fact_id}' before its required event"
+                    )));
+                }
+            }
+            Disclosure::NeverUnless => {
+                if !trigger_matches(&latest_norm, &fact.triggers) {
+                    return Err(CallerError::Decision(format!(
+                        "caller selected never_unless fact '{fact_id}' without its trigger"
+                    )));
+                }
+            }
+            Disclosure::Volunteer if !first_caller_turn => {
+                return Err(CallerError::Decision(format!(
+                    "caller selected volunteer fact '{fact_id}' after the opening"
                 )));
             }
+            _ => {}
         }
         ids.push(fact.id.clone());
         values.push(fact.value_text());
     }
 
     if ids.is_empty() {
+        let style = if model_style == "repeat" {
+            "neutral"
+        } else {
+            clamp_style(model_style, timeline_style(scenario, elapsed_s))
+        };
         return Ok((fallback(style), ids));
     }
+
+    let all_disclosed = ids.iter().all(|id| disclosed.iter().any(|seen| seen == id));
+    if model_style == "repeat" && !all_disclosed {
+        return Err(CallerError::Decision(
+            "caller selected repeat for a fact it has not disclosed".to_string(),
+        ));
+    }
+    let style = if all_disclosed {
+        "repeat"
+    } else {
+        clamp_style(model_style, timeline_style(scenario, elapsed_s))
+    };
 
     let joined = values.join(". ");
     let text = match style {
@@ -129,6 +172,75 @@ pub fn render(
         _ => joined,
     };
     Ok((text, ids))
+}
+
+fn normalize_style(style: Option<&str>) -> &'static str {
+    match style.unwrap_or("neutral") {
+        "anxious" => "anxious",
+        "distressed" => "distressed",
+        "repeat" => "repeat",
+        _ => "neutral",
+    }
+}
+
+fn style_rank(style: &str) -> u8 {
+    match style {
+        "distressed" => 2,
+        "anxious" => 1,
+        _ => 0,
+    }
+}
+
+fn clamp_style(style: &str, ceiling: &str) -> &'static str {
+    match (style, style_rank(style) <= style_rank(ceiling)) {
+        ("anxious", true) => "anxious",
+        ("distressed", true) => "distressed",
+        _ => "neutral",
+    }
+}
+
+fn timeline_style(scenario: &Scenario, elapsed_s: f64) -> &'static str {
+    let state = scenario
+        .timeline
+        .iter()
+        .filter(|event| event.at_seconds <= elapsed_s)
+        .max_by(|left, right| {
+            left.at_seconds
+                .partial_cmp(&right.at_seconds)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|event| event.caller_state.to_lowercase())
+        .unwrap_or_default();
+    if state.contains("struggl") {
+        "distressed"
+    } else if state.contains("anxi") || state.contains("distress") {
+        "anxious"
+    } else {
+        "neutral"
+    }
+}
+
+fn trigger_matches(latest_norm: &str, triggers: &[String]) -> bool {
+    triggers.iter().any(|trigger| {
+        let trigger = normalize(trigger);
+        if trigger.is_empty() {
+            return false;
+        }
+        if trigger.contains(' ') {
+            latest_norm.contains(&trigger)
+        } else {
+            latest_norm.split_whitespace().any(|word| word == trigger)
+        }
+    })
+}
+
+fn normalize(text: &str) -> String {
+    let lowered = text.to_lowercase();
+    let cleaned: String = lowered
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn fallback(style: &str) -> String {

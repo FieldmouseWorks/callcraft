@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::json;
 
+use super::http;
 use super::{CallerConfig, ProviderError};
 
 #[derive(Debug, Deserialize)]
@@ -31,7 +32,7 @@ pub async fn complete(
             "OpenAI-compatible base URL is empty".to_string(),
         ));
     }
-    let url = endpoint(&config.base_url, "chat/completions");
+    let url = http::endpoint(&config.base_url, "chat/completions");
 
     let mut request = client.post(url).json(&json!({
         "model": config.model,
@@ -49,6 +50,10 @@ pub async fn complete(
     }
 
     let response = request
+        .timeout(crate::providers::request_timeout(
+            "CALLCRAFT_CALLER_TIMEOUT_MS",
+            5000,
+        ))
         .send()
         .await
         .map_err(|error| ProviderError::Transport(format!("provider request failed: {error}")))?;
@@ -57,7 +62,7 @@ pub async fn complete(
         let body = response.text().await.unwrap_or_default();
         return Err(ProviderError::Transport(format!(
             "provider returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
 
@@ -76,17 +81,4 @@ pub async fn complete(
         ));
     }
     Ok(content)
-}
-
-fn endpoint(base_url: &str, path: &str) -> String {
-    let base_url = base_url.trim_end_matches('/');
-    if base_url.ends_with("/v1") {
-        format!("{base_url}/{path}")
-    } else {
-        format!("{base_url}/v1/{path}")
-    }
-}
-
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
 }

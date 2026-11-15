@@ -79,6 +79,12 @@ impl CallerEngine {
         self.disclosed.iter().map(String::as_str)
     }
 
+    /// Marks the conversation as started so a later deterministic fallback does
+    /// not volunteer a fact mid-call after the LLM handled the opening.
+    pub fn mark_volunteered(&mut self) {
+        self.volunteered = true;
+    }
+
     pub fn respond(&mut self, trainee_text: &str, elapsed_s: f64) -> CallerTurn {
         let normalized = normalize(trainee_text);
 

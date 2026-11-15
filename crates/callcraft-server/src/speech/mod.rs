@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::providers::{AuthKind, SettingsStore, StoredSpeech};
 
-pub const STT_TEST_WAV: &[u8] = include_bytes!("../../../../assets/stt-test.wav");
+pub const STT_TEST_AUDIO: &[u8] = include_bytes!("../../../../assets/stt-test.webm");
+pub const STT_TEST_MIME: &str = "audio/webm";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,18 +26,36 @@ pub enum SpeechKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum SpeechApi {
+pub enum SttApi {
     OpenAiCompatible,
     ElevenLabs,
     Deepgram,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TtsApi {
+    OpenAiCompatible,
+    ElevenLabs,
+}
+
 #[derive(Debug, Clone, Copy, Serialize)]
-pub struct SpeechManifest {
+pub struct SttManifest {
     pub id: &'static str,
     pub label: &'static str,
-    pub kind: SpeechKind,
-    pub api: SpeechApi,
+    pub api: SttApi,
+    pub auth: AuthKind,
+    pub default_base_url: Option<&'static str>,
+    pub default_model: Option<&'static str>,
+    pub docs_url: &'static str,
+    pub note: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TtsManifest {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub api: TtsApi,
     pub auth: AuthKind,
     pub default_base_url: Option<&'static str>,
     pub default_model: Option<&'static str>,
@@ -45,75 +64,64 @@ pub struct SpeechManifest {
     pub note: &'static str,
 }
 
-pub const STT_PROVIDERS: &[SpeechManifest] = &[
-    SpeechManifest {
+pub const STT_PROVIDERS: &[SttManifest] = &[
+    SttManifest {
         id: "openai-compatible",
         label: "OpenAI-compatible STT",
-        kind: SpeechKind::Stt,
-        api: SpeechApi::OpenAiCompatible,
+        api: SttApi::OpenAiCompatible,
         auth: AuthKind::OptionalApiKey,
         default_base_url: None,
         default_model: Some("whisper-1"),
-        default_voice: None,
         docs_url: "https://platform.openai.com/docs/guides/speech-to-text",
         note: "Any server exposing /v1/audio/transcriptions.",
     },
-    SpeechManifest {
+    SttManifest {
         id: "openai",
         label: "OpenAI transcription",
-        kind: SpeechKind::Stt,
-        api: SpeechApi::OpenAiCompatible,
+        api: SttApi::OpenAiCompatible,
         auth: AuthKind::ApiKey,
         default_base_url: Some("https://api.openai.com"),
         default_model: Some("whisper-1"),
-        default_voice: None,
         docs_url: "https://platform.openai.com/docs/guides/speech-to-text",
         note: "Cloud transcription; API key required.",
     },
-    SpeechManifest {
+    SttManifest {
         id: "whisper-cpp",
         label: "whisper.cpp (local)",
-        kind: SpeechKind::Stt,
-        api: SpeechApi::OpenAiCompatible,
+        api: SttApi::OpenAiCompatible,
         auth: AuthKind::None,
         default_base_url: Some("http://127.0.0.1:8080"),
         default_model: Some("whisper-1"),
-        default_voice: None,
-        docs_url: "https://github.com/ggml-org/llama.cpp",
+        docs_url: "https://github.com/ggml-org/whisper.cpp",
         note: "Local runner exposing the OpenAI transcription route.",
     },
-    SpeechManifest {
+    SttManifest {
         id: "elevenlabs",
         label: "ElevenLabs Scribe",
-        kind: SpeechKind::Stt,
-        api: SpeechApi::ElevenLabs,
+        api: SttApi::ElevenLabs,
         auth: AuthKind::ApiKey,
         default_base_url: Some("https://api.elevenlabs.io"),
         default_model: Some("scribe_v1"),
-        default_voice: None,
         docs_url: "https://elevenlabs.io/docs/speech-to-text",
         note: "Cloud transcription; API key required.",
     },
-    SpeechManifest {
+    SttManifest {
         id: "deepgram",
         label: "Deepgram",
-        kind: SpeechKind::Stt,
-        api: SpeechApi::Deepgram,
+        api: SttApi::Deepgram,
         auth: AuthKind::ApiKey,
         default_base_url: Some("https://api.deepgram.com"),
         default_model: Some("nova-3"),
-        default_voice: None,
         docs_url: "https://developers.deepgram.com/docs",
         note: "Cloud transcription; API key required.",
     },
 ];
 
-pub const TTS_PROVIDERS: &[SpeechManifest] = &[
-    SpeechManifest {
+pub const TTS_PROVIDERS: &[TtsManifest] = &[
+    TtsManifest {
         id: "openai-compatible",
         label: "OpenAI-compatible TTS",
-        kind: SpeechKind::Tts,
-        api: SpeechApi::OpenAiCompatible,
+        api: TtsApi::OpenAiCompatible,
         auth: AuthKind::OptionalApiKey,
         default_base_url: None,
         default_model: Some("tts-1"),
@@ -121,11 +129,10 @@ pub const TTS_PROVIDERS: &[SpeechManifest] = &[
         docs_url: "https://platform.openai.com/docs/guides/text-to-speech",
         note: "Any server exposing /v1/audio/speech.",
     },
-    SpeechManifest {
+    TtsManifest {
         id: "openai",
         label: "OpenAI speech",
-        kind: SpeechKind::Tts,
-        api: SpeechApi::OpenAiCompatible,
+        api: TtsApi::OpenAiCompatible,
         auth: AuthKind::ApiKey,
         default_base_url: Some("https://api.openai.com"),
         default_model: Some("tts-1"),
@@ -133,11 +140,10 @@ pub const TTS_PROVIDERS: &[SpeechManifest] = &[
         docs_url: "https://platform.openai.com/docs/guides/text-to-speech",
         note: "Cloud speech; API key required.",
     },
-    SpeechManifest {
+    TtsManifest {
         id: "elevenlabs",
         label: "ElevenLabs",
-        kind: SpeechKind::Tts,
-        api: SpeechApi::ElevenLabs,
+        api: TtsApi::ElevenLabs,
         auth: AuthKind::ApiKey,
         default_base_url: Some("https://api.elevenlabs.io"),
         default_model: Some("eleven_multilingual_v2"),
@@ -145,11 +151,10 @@ pub const TTS_PROVIDERS: &[SpeechManifest] = &[
         docs_url: "https://elevenlabs.io/docs/text-to-speech",
         note: "Cloud speech; API key and voice id required.",
     },
-    SpeechManifest {
+    TtsManifest {
         id: "piper",
         label: "Piper (local, via shim)",
-        kind: SpeechKind::Tts,
-        api: SpeechApi::OpenAiCompatible,
+        api: TtsApi::OpenAiCompatible,
         auth: AuthKind::None,
         default_base_url: None,
         default_model: Some("tts-1"),
@@ -159,18 +164,18 @@ pub const TTS_PROVIDERS: &[SpeechManifest] = &[
     },
 ];
 
-pub fn find(kind: SpeechKind, id: &str) -> Option<&'static SpeechManifest> {
-    let providers = match kind {
-        SpeechKind::Stt => STT_PROVIDERS,
-        SpeechKind::Tts => TTS_PROVIDERS,
-    };
-    providers.iter().find(|provider| provider.id == id)
+pub fn find_stt(id: &str) -> Option<&'static SttManifest> {
+    STT_PROVIDERS.iter().find(|provider| provider.id == id)
+}
+
+pub fn find_tts(id: &str) -> Option<&'static TtsManifest> {
+    TTS_PROVIDERS.iter().find(|provider| provider.id == id)
 }
 
 #[derive(Debug, Clone)]
 pub struct SttConfig {
     pub provider_id: Option<String>,
-    pub api: SpeechApi,
+    pub api: SttApi,
     pub base_url: String,
     pub model: String,
     pub language: Option<String>,
@@ -180,7 +185,7 @@ pub struct SttConfig {
 #[derive(Debug, Clone)]
 pub struct TtsConfig {
     pub provider_id: Option<String>,
-    pub api: SpeechApi,
+    pub api: TtsApi,
     pub base_url: String,
     pub model: String,
     pub voice: Option<String>,
@@ -204,13 +209,25 @@ impl SpeechConfig {
     pub fn load(store: &SettingsStore) -> Self {
         let env_config = Self::from_env();
         let stored = store.load_speech();
+        let stt_env_invalid = env_string("CALLCRAFT_STT_PROVIDER")
+            .is_some_and(|provider_id| find_stt(&provider_id).is_none());
+        let tts_env_invalid = env_string("CALLCRAFT_TTS_PROVIDER")
+            .is_some_and(|provider_id| find_tts(&provider_id).is_none());
         Self {
-            stt: env_config
-                .stt
-                .or_else(|| stored_stt(stored.as_ref(), store)),
-            tts: env_config
-                .tts
-                .or_else(|| stored_tts(stored.as_ref(), store)),
+            stt: if stt_env_invalid {
+                None
+            } else {
+                env_config
+                    .stt
+                    .or_else(|| stored_stt(stored.as_ref(), store))
+            },
+            tts: if tts_env_invalid {
+                None
+            } else {
+                env_config
+                    .tts
+                    .or_else(|| stored_tts(stored.as_ref(), store))
+            },
         }
     }
 }
@@ -222,7 +239,7 @@ fn stt_from_env() -> Option<SttConfig> {
         return None;
     }
     let id = provider.unwrap_or_else(|| "openai-compatible".to_string());
-    let manifest = find(SpeechKind::Stt, &id)?;
+    let manifest = find_stt(&id)?;
     let base_url = url
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .unwrap_or_default();
@@ -246,7 +263,7 @@ fn tts_from_env() -> Option<TtsConfig> {
         return None;
     }
     let id = provider.unwrap_or_else(|| "openai-compatible".to_string());
-    let manifest = find(SpeechKind::Tts, &id)?;
+    let manifest = find_tts(&id)?;
     let base_url = url
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .unwrap_or_default();
@@ -266,7 +283,7 @@ fn tts_from_env() -> Option<TtsConfig> {
 
 fn stored_stt(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<SttConfig> {
     let stored = stored?.stt.as_ref()?;
-    let manifest = find(SpeechKind::Stt, &stored.provider_id)?;
+    let manifest = find_stt(&stored.provider_id)?;
     let base_url = if stored.base_url.trim().is_empty() {
         manifest
             .default_base_url
@@ -275,8 +292,14 @@ fn stored_stt(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<St
     } else {
         stored.base_url.clone()
     };
-    let api_key = env_string("CALLCRAFT_STT_API_KEY")
-        .or_else(|| env_string("CALLCRAFT_ADAPTER_TOKEN"))
+    let env_provider = env_string("CALLCRAFT_STT_PROVIDER");
+    let env_key = env_string("CALLCRAFT_STT_API_KEY")
+        .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()));
+    let api_key = env_key
+        .or_else(|| {
+            env_string("CALLCRAFT_ADAPTER_TOKEN")
+                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
+        })
         .or_else(|| store.load_key_ns("stt", &stored.provider_id));
     Some(SttConfig {
         provider_id: Some(stored.provider_id.clone()),
@@ -301,7 +324,7 @@ fn stored_stt(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<St
 
 fn stored_tts(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<TtsConfig> {
     let stored = stored?.tts.as_ref()?;
-    let manifest = find(SpeechKind::Tts, &stored.provider_id)?;
+    let manifest = find_tts(&stored.provider_id)?;
     let base_url = if stored.base_url.trim().is_empty() {
         manifest
             .default_base_url
@@ -310,8 +333,14 @@ fn stored_tts(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<Tt
     } else {
         stored.base_url.clone()
     };
-    let api_key = env_string("CALLCRAFT_TTS_API_KEY")
-        .or_else(|| env_string("CALLCRAFT_ADAPTER_TOKEN"))
+    let env_provider = env_string("CALLCRAFT_TTS_PROVIDER");
+    let env_key = env_string("CALLCRAFT_TTS_API_KEY")
+        .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()));
+    let api_key = env_key
+        .or_else(|| {
+            env_string("CALLCRAFT_ADAPTER_TOKEN")
+                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
+        })
         .or_else(|| store.load_key_ns("tts", &stored.provider_id));
     Some(TtsConfig {
         provider_id: Some(stored.provider_id.clone()),
@@ -341,8 +370,8 @@ pub fn stt_from_request(
     language: Option<String>,
     api_key: Option<String>,
 ) -> Result<SttConfig, String> {
-    let manifest = find(SpeechKind::Stt, provider_id)
-        .ok_or_else(|| format!("unknown STT provider '{provider_id}'"))?;
+    let manifest =
+        find_stt(provider_id).ok_or_else(|| format!("unknown STT provider '{provider_id}'"))?;
     let api_key = clean(api_key);
     if manifest.auth == AuthKind::ApiKey && api_key.is_none() {
         return Err(format!("{} requires an API key", manifest.label));
@@ -350,6 +379,7 @@ pub fn stt_from_request(
     let base_url = clean(base_url)
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .ok_or_else(|| format!("{} requires a base URL", manifest.label))?;
+    crate::providers::ensure_safe_base_url(&base_url)?;
     Ok(SttConfig {
         provider_id: Some(manifest.id.to_string()),
         api: manifest.api,
@@ -369,8 +399,8 @@ pub fn tts_from_request(
     voice: Option<String>,
     api_key: Option<String>,
 ) -> Result<TtsConfig, String> {
-    let manifest = find(SpeechKind::Tts, provider_id)
-        .ok_or_else(|| format!("unknown TTS provider '{provider_id}'"))?;
+    let manifest =
+        find_tts(provider_id).ok_or_else(|| format!("unknown TTS provider '{provider_id}'"))?;
     let api_key = clean(api_key);
     if manifest.auth == AuthKind::ApiKey && api_key.is_none() {
         return Err(format!("{} requires an API key", manifest.label));
@@ -378,8 +408,9 @@ pub fn tts_from_request(
     let base_url = clean(base_url)
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .ok_or_else(|| format!("{} requires a base URL", manifest.label))?;
+    crate::providers::ensure_safe_base_url(&base_url)?;
     let voice = clean(voice).or_else(|| manifest.default_voice.map(str::to_string));
-    if manifest.api == SpeechApi::ElevenLabs && voice.is_none() {
+    if manifest.api == TtsApi::ElevenLabs && voice.is_none() {
         return Err("ElevenLabs requires a voice id".to_string());
     }
     Ok(TtsConfig {
@@ -394,23 +425,7 @@ pub fn tts_from_request(
     })
 }
 
-#[derive(Debug)]
-pub enum SpeechError {
-    Transport(String),
-    Invalid(String),
-}
-
-impl SpeechError {
-    pub fn message(&self) -> &str {
-        match self {
-            SpeechError::Transport(message) | SpeechError::Invalid(message) => message,
-        }
-    }
-
-    pub fn is_invalid(&self) -> bool {
-        matches!(self, SpeechError::Invalid(_))
-    }
-}
+pub use crate::providers::ProviderError as SpeechError;
 
 pub async fn transcribe(
     client: &reqwest::Client,
@@ -418,12 +433,13 @@ pub async fn transcribe(
     mime: &str,
     audio: &[u8],
 ) -> Result<String, SpeechError> {
+    crate::providers::ensure_safe_base_url(&config.base_url).map_err(SpeechError::Invalid)?;
     match config.api {
-        SpeechApi::OpenAiCompatible => {
+        SttApi::OpenAiCompatible => {
             openai_compatible::transcribe(client, config, mime, audio).await
         }
-        SpeechApi::ElevenLabs => elevenlabs::transcribe(client, config, mime, audio).await,
-        SpeechApi::Deepgram => deepgram::transcribe(client, config, mime, audio).await,
+        SttApi::ElevenLabs => elevenlabs::transcribe(client, config, mime, audio).await,
+        SttApi::Deepgram => deepgram::transcribe(client, config, mime, audio).await,
     }
 }
 
@@ -432,12 +448,10 @@ pub async fn synthesize(
     config: &TtsConfig,
     text: &str,
 ) -> Result<(Vec<u8>, String), SpeechError> {
+    crate::providers::ensure_safe_base_url(&config.base_url).map_err(SpeechError::Invalid)?;
     match config.api {
-        SpeechApi::OpenAiCompatible => openai_compatible::synthesize(client, config, text).await,
-        SpeechApi::ElevenLabs => elevenlabs::synthesize(client, config, text).await,
-        SpeechApi::Deepgram => Err(SpeechError::Invalid(
-            "Deepgram TTS is not supported".to_string(),
-        )),
+        TtsApi::OpenAiCompatible => openai_compatible::synthesize(client, config, text).await,
+        TtsApi::ElevenLabs => elevenlabs::synthesize(client, config, text).await,
     }
 }
 

@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::json;
 
+use super::http;
 use super::{CallerConfig, ProviderError};
 
 /// Anthropic's current Messages API version. Sampling fields (`temperature`,
@@ -37,7 +38,7 @@ pub async fn complete(
             "Anthropic base URL is empty".to_string(),
         ));
     }
-    let url = endpoint(&config.base_url);
+    let url = http::endpoint(&config.base_url, "messages");
 
     let response = client
         .post(url)
@@ -51,6 +52,10 @@ pub async fn complete(
                 {"role": "user", "content": user}
             ]
         }))
+        .timeout(crate::providers::request_timeout(
+            "CALLCRAFT_CALLER_TIMEOUT_MS",
+            5000,
+        ))
         .send()
         .await
         .map_err(|error| ProviderError::Transport(format!("provider request failed: {error}")))?;
@@ -60,7 +65,7 @@ pub async fn complete(
         let body = response.text().await.unwrap_or_default();
         return Err(ProviderError::Transport(format!(
             "provider returned {status}: {}",
-            snippet(&body)
+            http::snippet(&body)
         )));
     }
 
@@ -81,17 +86,4 @@ pub async fn complete(
         ));
     }
     Ok(text)
-}
-
-fn endpoint(base_url: &str) -> String {
-    let base_url = base_url.trim_end_matches('/');
-    if base_url.ends_with("/v1") {
-        format!("{base_url}/messages")
-    } else {
-        format!("{base_url}/v1/messages")
-    }
-}
-
-fn snippet(text: &str) -> String {
-    text.chars().take(200).collect()
 }

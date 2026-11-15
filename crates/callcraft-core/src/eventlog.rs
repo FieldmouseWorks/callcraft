@@ -25,6 +25,10 @@ enum Record {
     Event {
         name: String,
     },
+    Latency {
+        stage: String,
+        ms: u64,
+    },
     End,
 }
 
@@ -66,6 +70,10 @@ pub fn to_jsonl(session: &Session, scenario: &Scenario) -> String {
                 fact_ids: utterance.fact_ids.clone(),
             },
             SessionItem::Event { name } => Record::Event { name: name.clone() },
+            SessionItem::Latency(latency) => Record::Latency {
+                stage: latency.stage.clone(),
+                ms: latency.ms,
+            },
         };
         lines.push(serde_json::to_string(&record).expect("record serializes"));
     }
@@ -133,6 +141,10 @@ pub fn replay(jsonl: &str) -> Result<Session, EventLogError> {
             Record::Event { name } => {
                 let session = session.as_mut().ok_or(EventLogError::RecordBeforeHeader)?;
                 session.add_event(name);
+            }
+            Record::Latency { stage, ms } => {
+                let session = session.as_mut().ok_or(EventLogError::RecordBeforeHeader)?;
+                session.add_latency(stage, ms);
             }
             Record::End => saw_end = true,
         }
