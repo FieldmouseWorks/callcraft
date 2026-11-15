@@ -4,6 +4,10 @@
 //! so the desktop app and the browser (`callcraft serve`) share one API, one origin
 //! model and one test surface.
 
+mod caller_llm;
+
+pub use caller_llm::CallerConfig;
+
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -39,6 +43,8 @@ struct AppState {
     token: Arc<String>,
     sessions: Arc<Mutex<HashMap<String, StoredSession>>>,
     voice: VoiceConfig,
+    caller: CallerConfig,
+    http: reqwest::Client,
 }
 
 struct StoredSession {
@@ -107,23 +113,43 @@ fn env_string(key: &str) -> Option<String> {
 /// Port 0 asks the OS for an ephemeral port. Returns the actual port and a
 /// join handle; the caller decides how long to keep it alive.
 pub fn start(port: u16, token: String) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
-    start_with_config(port, token, VoiceConfig::from_env())
+    start_with_adapters(
+        port,
+        token,
+        VoiceConfig::from_env(),
+        CallerConfig::from_env(),
+    )
 }
 
-/// Start with explicit adapter configuration. Tests and the desktop shell use
-/// this so environment variables never leak between runs.
+/// Start with explicit voice adapters and a deterministic caller.
 pub fn start_with_config(
     port: u16,
     token: String,
     voice: VoiceConfig,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
+    start_with_adapters(port, token, voice, CallerConfig::default())
+}
+
+/// Start with explicit voice and caller adapter configuration.
+pub fn start_with_adapters(
+    port: u16,
+    token: String,
+    voice: VoiceConfig,
+    caller: CallerConfig,
+) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
     listener.set_nonblocking(true)?;
     let actual_port = listener.local_addr()?.port();
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|error| anyhow::anyhow!("http client: {error}"))?;
     let state = AppState {
         token: Arc::new(token),
         sessions: Arc::new(Mutex::new(HashMap::new())),
         voice,
+        caller,
+        http,
     };
 
     let handle = std::thread::spawn(move || {
@@ -474,20 +500,136 @@ async fn delete_session(
     Json(json!({"ok": true})).into_response()
 }
 
-fn apply_turn(stored: &mut StoredSession, text: &str) -> String {
+struct TurnOutcome {
+    caller: String,
+    source: &'static str,
+    caller_error: Option<String>,
+    transcript: Vec<Utterance>,
+    events: Vec<String>,
+}
+
+fn speaker_label(speaker: Speaker) -> &'static str {
+    match speaker {
+        Speaker::Trainee => "Trainee",
+        Speaker::Caller => "Caller",
+    }
+}
+
+/// Resolve one trainee utterance, optionally through the LLM decision adapter,
+/// then apply it under a short lock. The model never writes caller text; it
+/// selects fact ids, and rendering happens here from the fact base.
+async fn produce_turn(state: &AppState, id: &str, text: &str) -> Result<TurnOutcome, Response> {
+    let (scenario, transcript, events, disclosed, elapsed_s) = {
+        let sessions = state.sessions.lock().expect("sessions lock");
+        let Some(stored) = sessions.get(id) else {
+            return Err(error_response(StatusCode::NOT_FOUND, "session not found"));
+        };
+        if stored.finished {
+            return Err(error_response(StatusCode::CONFLICT, "session is finished"));
+        }
+        let transcript = stored
+            .session
+            .transcript()
+            .map(|utterance| {
+                (
+                    speaker_label(utterance.speaker).to_string(),
+                    utterance.text.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let events = stored
+            .session
+            .events()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let disclosed = stored
+            .engine
+            .disclosed_fact_ids()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        (
+            stored.scenario.clone(),
+            transcript,
+            events,
+            disclosed,
+            stored.started.elapsed().as_secs_f64(),
+        )
+    };
+
+    let mut llm_reply: Option<(String, Vec<String>)> = None;
+    let mut caller_error: Option<String> = None;
+    let mut drift = false;
+
+    if state.caller.url.is_some() {
+        match caller_llm::decide(
+            &state.http,
+            &state.caller,
+            &scenario,
+            &transcript,
+            &events,
+            &disclosed,
+            elapsed_s,
+            text,
+        )
+        .await
+        {
+            Ok(decision) => match caller_llm::render(&decision, &scenario, &events) {
+                Ok((reply, fact_ids)) => llm_reply = Some((reply, fact_ids)),
+                Err(error) => {
+                    drift = error.is_invalid();
+                    caller_error = Some(error.message().to_string());
+                }
+            },
+            Err(error) => {
+                drift = error.is_invalid();
+                caller_error = Some(error.message().to_string());
+            }
+        }
+    }
+
+    let mut sessions = state.sessions.lock().expect("sessions lock");
+    let Some(stored) = sessions.get_mut(id) else {
+        return Err(error_response(StatusCode::NOT_FOUND, "session not found"));
+    };
+    if stored.finished {
+        return Err(error_response(StatusCode::CONFLICT, "session is finished"));
+    }
+    if drift {
+        stored.session.drift_rejections += 1;
+    }
+
     let t_ms = stored.started.elapsed().as_millis() as u64;
     stored
         .session
         .add_utterance(Speaker::Trainee, text.to_string(), t_ms, Vec::new());
-    let reply = stored.engine.respond(text, t_ms as f64 / 1000.0);
-    let caller = reply.text.clone();
+    let (caller, source, fact_ids) = match llm_reply {
+        Some((reply, fact_ids)) => {
+            for fact_id in &fact_ids {
+                stored.engine.mark_disclosed(fact_id);
+            }
+            (reply, "llm", fact_ids)
+        }
+        None => {
+            let reply = stored.engine.respond(text, t_ms as f64 / 1000.0);
+            (reply.text, "deterministic", reply.disclosed)
+        }
+    };
     stored.session.add_utterance(
         Speaker::Caller,
-        reply.text,
+        caller.clone(),
         t_ms.saturating_add(1),
-        reply.disclosed,
+        fact_ids,
     );
-    caller
+
+    let transcript = stored.session.transcript().cloned().collect();
+    let events = stored.session.events().map(str::to_string).collect();
+    Ok(TurnOutcome {
+        caller,
+        source,
+        caller_error,
+        transcript,
+        events,
+    })
 }
 
 async fn turn(
@@ -505,23 +647,17 @@ async fn turn(
         return error_response(StatusCode::BAD_REQUEST, "text is empty");
     }
 
-    let mut sessions = state.sessions.lock().expect("sessions lock");
-    let Some(stored) = sessions.get_mut(&id) else {
-        return error_response(StatusCode::NOT_FOUND, "session not found");
+    let outcome = match produce_turn(&state, &id, text).await {
+        Ok(outcome) => outcome,
+        Err(response) => return response,
     };
-    if stored.finished {
-        return error_response(StatusCode::CONFLICT, "session is finished");
-    }
-
-    let caller = apply_turn(stored, text);
-
-    let transcript: Vec<&Utterance> = stored.session.transcript().collect();
-    let events: Vec<&str> = stored.session.events().collect();
     Json(json!({
         "ok": true,
-        "caller": caller,
-        "transcript": transcript,
-        "events": events,
+        "caller": outcome.caller,
+        "caller_source": outcome.source,
+        "caller_error": outcome.caller_error,
+        "transcript": outcome.transcript,
+        "events": outcome.events,
     }))
     .into_response()
 }
@@ -590,6 +726,7 @@ async fn voice_status(
         "ok": true,
         "stt": state.voice.stt_url.is_some(),
         "tts": state.voice.tts_url.is_some(),
+        "caller": if state.caller.url.is_some() { "llm" } else { "deterministic" },
     }))
     .into_response()
 }
@@ -641,20 +778,7 @@ async fn voice_turn(
         }
     }
 
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("http client: {error}"),
-            );
-        }
-    };
-
-    let transcript = match transcribe(&client, &state.voice, &stt_url, &mime, &body).await {
+    let transcript = match transcribe(&state.http, &state.voice, &stt_url, &mime, &body).await {
         Ok(text) => text,
         Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error),
     };
@@ -663,25 +787,21 @@ async fn voice_turn(
         return error_response(StatusCode::UNPROCESSABLE_ENTITY, "no speech detected");
     }
 
-    let caller = {
-        let mut sessions = state.sessions.lock().expect("sessions lock");
-        let Some(stored) = sessions.get_mut(&id) else {
-            return error_response(StatusCode::NOT_FOUND, "session not found");
-        };
-        if stored.finished {
-            return error_response(StatusCode::CONFLICT, "session is finished");
-        }
-        apply_turn(stored, &transcript)
+    let outcome = match produce_turn(&state, &id, &transcript).await {
+        Ok(outcome) => outcome,
+        Err(response) => return response,
     };
 
     let mut payload = json!({
         "ok": true,
         "transcript": transcript,
-        "caller": caller.clone(),
+        "caller": outcome.caller.clone(),
+        "caller_source": outcome.source,
+        "caller_error": outcome.caller_error,
     });
 
     if let Some(tts_url) = state.voice.tts_url.clone() {
-        match synthesize(&client, &state.voice, &tts_url, &caller).await {
+        match synthesize(&state.http, &state.voice, &tts_url, &outcome.caller).await {
             Ok((audio, audio_mime)) => {
                 payload["audio_base64"] =
                     json!(base64::engine::general_purpose::STANDARD.encode(audio));

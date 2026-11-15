@@ -67,11 +67,14 @@ STT and TTS adapters; unset means text-only:
 ```bash
 CALLCRAFT_STT_URL=http://127.0.0.1:8080 \
 CALLCRAFT_TTS_URL=http://127.0.0.1:8081 \
+CALLCRAFT_CALLER_URL=http://127.0.0.1:8082 \
 cargo run -p callcraft-cli -- serve
 ```
 
 Contracts, provider notes, and privacy rules:
-[docs/VOICE-ADAPTERS.md](docs/VOICE-ADAPTERS.md).
+[docs/VOICE-ADAPTERS.md](docs/VOICE-ADAPTERS.md). The LLM caller selects
+authored fact ids only; the server renders the words:
+[docs/LLM-CALLER.md](docs/LLM-CALLER.md).
 
 ## Windows spike
 
@@ -129,10 +132,10 @@ PILOT-30-DAY.md    pilot plan and success criteria
 
 ## Status
 
-v0.1 — text and voice turns, deterministic caller, checklist scoring, JSON
-reports, byte-identical replay, session API, runner UI, structured authoring
-UI, and a Tauri shell scaffold. Not built yet: LLM caller adapter, native file
-dialog, auth beyond the per-launch token. The 30-day pilot criteria in
+v0.1 — text and voice turns, deterministic caller with optional LLM
+decisioning, checklist scoring, JSON reports, byte-identical replay, session
+API, runner UI, structured authoring UI, and a Tauri shell scaffold. Not built
+yet: native file dialog, auth beyond the per-launch token. The 30-day pilot criteria in
 [PILOT-30-DAY.md](PILOT-30-DAY.md) decide whether any of that gets built.
 
 Dependency and release rules: [docs/DEPENDENCY-POLICY.md](docs/DEPENDENCY-POLICY.md).

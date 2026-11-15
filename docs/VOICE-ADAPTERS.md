@@ -11,7 +11,9 @@ repository.
 - One trainee utterance per turn: browser records, server transcribes, the
   deterministic caller answers, server optionally synthesizes the reply.
 - No streaming, no barge-in, no live-call audio.
-- No LLM caller yet. The caller is still the deterministic fact-base engine.
+- The caller can optionally use an LLM decision adapter: the model selects
+  authored fact ids and tone, and the server renders the words. See
+  [LLM-CALLER.md](LLM-CALLER.md).
 - Audio is forwarded, never written to disk, and never stored in the report.
 
 ## Contracts

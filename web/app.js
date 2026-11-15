@@ -173,13 +173,14 @@ async function sendTurn() {
 async function refreshVoiceStatus() {
   try {
     const status = await api("/api/voice/status");
+    const callerMode = status.caller === "llm" ? " · LLM caller" : "";
     if (status.stt) {
       recordButton.disabled = finished;
-      voiceMeta.textContent = "Voice ready";
+      voiceMeta.textContent = `Voice ready${callerMode}`;
       voiceMeta.className = "meta ok";
     } else {
       recordButton.disabled = true;
-      voiceMeta.textContent = "Voice not configured — text only";
+      voiceMeta.textContent = `Voice not configured — text only${callerMode}`;
       voiceMeta.className = "meta";
     }
   } catch (error) {
