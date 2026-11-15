@@ -224,15 +224,19 @@ impl SpeechConfig {
             .is_some_and(|provider_id| find_stt(&provider_id).is_none());
         let tts_env_invalid = env_string("CALLCRAFT_TTS_PROVIDER")
             .is_some_and(|provider_id| find_tts(&provider_id).is_none());
+        let stt_env_selected = env_string("CALLCRAFT_STT_PROVIDER").is_some()
+            || env_string("CALLCRAFT_STT_URL").is_some();
+        let tts_env_selected = env_string("CALLCRAFT_TTS_PROVIDER").is_some()
+            || env_string("CALLCRAFT_TTS_URL").is_some();
         Self {
-            stt: if stt_env_invalid {
+            stt: if stt_env_invalid || (stt_env_selected && env_config.stt.is_none()) {
                 None
             } else {
                 env_config
                     .stt
                     .or_else(|| stored_stt(stored.as_ref(), store))
             },
-            tts: if tts_env_invalid {
+            tts: if tts_env_invalid || (tts_env_selected && env_config.tts.is_none()) {
                 None
             } else {
                 env_config
@@ -243,138 +247,7 @@ impl SpeechConfig {
     }
 }
 
-fn stt_from_env() -> Option<SttConfig> {
-    let provider = env_string("CALLCRAFT_STT_PROVIDER");
-    let url = env_string("CALLCRAFT_STT_URL");
-    if provider.is_none() && url.is_none() {
-        return None;
-    }
-    let id = provider.unwrap_or_else(|| "openai-compatible".to_string());
-    let manifest = find_stt(&id)?;
-    let base_url = url
-        .or_else(|| manifest.default_base_url.map(str::to_string))
-        .unwrap_or_default();
-    Some(SttConfig {
-        provider_id: Some(id),
-        api: manifest.api,
-        base_url,
-        model: env_string("CALLCRAFT_STT_MODEL")
-            .or_else(|| manifest.default_model.map(str::to_string))
-            .unwrap_or_else(|| "whisper-1".to_string()),
-        language: env_string("CALLCRAFT_STT_LANGUAGE").or_else(|| Some("en".to_string())),
-        api_key: env_string("CALLCRAFT_STT_API_KEY")
-            .or_else(|| env_string("CALLCRAFT_ADAPTER_TOKEN")),
-    })
-}
-
-fn tts_from_env() -> Option<TtsConfig> {
-    let provider = env_string("CALLCRAFT_TTS_PROVIDER");
-    let url = env_string("CALLCRAFT_TTS_URL");
-    if provider.is_none() && url.is_none() {
-        return None;
-    }
-    let id = provider.unwrap_or_else(|| "openai-compatible".to_string());
-    let manifest = find_tts(&id)?;
-    let base_url = url
-        .or_else(|| manifest.default_base_url.map(str::to_string))
-        .unwrap_or_default();
-    Some(TtsConfig {
-        provider_id: Some(id),
-        api: manifest.api,
-        base_url,
-        model: env_string("CALLCRAFT_TTS_MODEL")
-            .or_else(|| manifest.default_model.map(str::to_string))
-            .unwrap_or_else(|| "tts-1".to_string()),
-        voice: env_string("CALLCRAFT_TTS_VOICE")
-            .or_else(|| manifest.default_voice.map(str::to_string)),
-        api_key: env_string("CALLCRAFT_TTS_API_KEY")
-            .or_else(|| env_string("CALLCRAFT_ADAPTER_TOKEN")),
-    })
-}
-
-fn stored_stt(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<SttConfig> {
-    let stored = stored?.stt.as_ref()?;
-    let manifest = find_stt(&stored.provider_id)?;
-    let base_url = if stored.base_url.trim().is_empty() {
-        manifest
-            .default_base_url
-            .map(str::to_string)
-            .unwrap_or_default()
-    } else {
-        stored.base_url.clone()
-    };
-    let env_provider = env_string("CALLCRAFT_STT_PROVIDER");
-    let env_key = env_string("CALLCRAFT_STT_API_KEY")
-        .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()));
-    let api_key = env_key
-        .or_else(|| {
-            env_string("CALLCRAFT_ADAPTER_TOKEN")
-                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
-        })
-        .or_else(|| store.load_key_ns("stt", &stored.provider_id));
-    Some(SttConfig {
-        provider_id: Some(stored.provider_id.clone()),
-        api: manifest.api,
-        base_url,
-        model: if stored.model.trim().is_empty() {
-            manifest
-                .default_model
-                .map(str::to_string)
-                .unwrap_or_else(|| "whisper-1".to_string())
-        } else {
-            stored.model.clone()
-        },
-        language: if stored.language.trim().is_empty() {
-            Some("en".to_string())
-        } else {
-            Some(stored.language.clone())
-        },
-        api_key,
-    })
-}
-
-fn stored_tts(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<TtsConfig> {
-    let stored = stored?.tts.as_ref()?;
-    let manifest = find_tts(&stored.provider_id)?;
-    let base_url = if stored.base_url.trim().is_empty() {
-        manifest
-            .default_base_url
-            .map(str::to_string)
-            .unwrap_or_default()
-    } else {
-        stored.base_url.clone()
-    };
-    let env_provider = env_string("CALLCRAFT_TTS_PROVIDER");
-    let env_key = env_string("CALLCRAFT_TTS_API_KEY")
-        .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()));
-    let api_key = env_key
-        .or_else(|| {
-            env_string("CALLCRAFT_ADAPTER_TOKEN")
-                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
-        })
-        .or_else(|| store.load_key_ns("tts", &stored.provider_id));
-    Some(TtsConfig {
-        provider_id: Some(stored.provider_id.clone()),
-        api: manifest.api,
-        base_url,
-        model: if stored.model.trim().is_empty() {
-            manifest
-                .default_model
-                .map(str::to_string)
-                .unwrap_or_else(|| "tts-1".to_string())
-        } else {
-            stored.model.clone()
-        },
-        voice: if stored.voice.trim().is_empty() {
-            manifest.default_voice.map(str::to_string)
-        } else {
-            Some(stored.voice.clone())
-        },
-        api_key,
-    })
-}
-
-pub fn stt_from_request(
+fn build_stt(
     provider_id: &str,
     base_url: Option<String>,
     model: Option<String>,
@@ -404,7 +277,7 @@ pub fn stt_from_request(
     })
 }
 
-pub fn tts_from_request(
+fn build_tts(
     provider_id: &str,
     base_url: Option<String>,
     model: Option<String>,
@@ -436,6 +309,102 @@ pub fn tts_from_request(
         voice,
         api_key,
     })
+}
+
+fn stt_from_env() -> Option<SttConfig> {
+    let provider = env_string("CALLCRAFT_STT_PROVIDER");
+    let url = env_string("CALLCRAFT_STT_URL");
+    if provider.is_none() && url.is_none() {
+        return None;
+    }
+    let id = provider.unwrap_or_else(|| "openai-compatible".to_string());
+    build_stt(
+        &id,
+        url,
+        env_string("CALLCRAFT_STT_MODEL"),
+        env_string("CALLCRAFT_STT_LANGUAGE"),
+        env_string("CALLCRAFT_STT_API_KEY").or_else(|| env_string("CALLCRAFT_ADAPTER_TOKEN")),
+    )
+    .ok()
+}
+
+fn tts_from_env() -> Option<TtsConfig> {
+    let provider = env_string("CALLCRAFT_TTS_PROVIDER");
+    let url = env_string("CALLCRAFT_TTS_URL");
+    if provider.is_none() && url.is_none() {
+        return None;
+    }
+    let id = provider.unwrap_or_else(|| "openai-compatible".to_string());
+    build_tts(
+        &id,
+        url,
+        env_string("CALLCRAFT_TTS_MODEL"),
+        env_string("CALLCRAFT_TTS_VOICE"),
+        env_string("CALLCRAFT_TTS_API_KEY").or_else(|| env_string("CALLCRAFT_ADAPTER_TOKEN")),
+    )
+    .ok()
+}
+
+fn stored_stt(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<SttConfig> {
+    let stored = stored?.stt.as_ref()?;
+    let env_provider = env_string("CALLCRAFT_STT_PROVIDER");
+    let env_key = env_string("CALLCRAFT_STT_API_KEY")
+        .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()));
+    let api_key = env_key
+        .or_else(|| {
+            env_string("CALLCRAFT_ADAPTER_TOKEN")
+                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
+        })
+        .or_else(|| store.load_key_ns("stt", &stored.provider_id));
+    build_stt(
+        &stored.provider_id,
+        Some(stored.base_url.clone()),
+        Some(stored.model.clone()),
+        Some(stored.language.clone()),
+        api_key,
+    )
+    .ok()
+}
+
+fn stored_tts(stored: Option<&StoredSpeech>, store: &SettingsStore) -> Option<TtsConfig> {
+    let stored = stored?.tts.as_ref()?;
+    let env_provider = env_string("CALLCRAFT_TTS_PROVIDER");
+    let env_key = env_string("CALLCRAFT_TTS_API_KEY")
+        .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()));
+    let api_key = env_key
+        .or_else(|| {
+            env_string("CALLCRAFT_ADAPTER_TOKEN")
+                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
+        })
+        .or_else(|| store.load_key_ns("tts", &stored.provider_id));
+    build_tts(
+        &stored.provider_id,
+        Some(stored.base_url.clone()),
+        Some(stored.model.clone()),
+        Some(stored.voice.clone()),
+        api_key,
+    )
+    .ok()
+}
+
+pub fn stt_from_request(
+    provider_id: &str,
+    base_url: Option<String>,
+    model: Option<String>,
+    language: Option<String>,
+    api_key: Option<String>,
+) -> Result<SttConfig, String> {
+    build_stt(provider_id, base_url, model, language, api_key)
+}
+
+pub fn tts_from_request(
+    provider_id: &str,
+    base_url: Option<String>,
+    model: Option<String>,
+    voice: Option<String>,
+    api_key: Option<String>,
+) -> Result<TtsConfig, String> {
+    build_tts(provider_id, base_url, model, voice, api_key)
 }
 
 pub use crate::providers::ProviderError as SpeechError;

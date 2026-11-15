@@ -172,75 +172,43 @@ impl CallerConfig {
         if provider_id.is_none() && url.is_none() {
             return None;
         }
-
         let id = provider_id.unwrap_or_else(|| "openai-compatible".to_string());
-        let manifest = find(&id);
-        let kind = manifest
-            .map(|manifest| manifest.kind)
-            .unwrap_or(ProviderKind::OpenAiCompatible);
-        let base_url = url
-            .or_else(|| manifest.and_then(|manifest| manifest.default_base_url.map(str::to_string)))
-            .unwrap_or_default();
-        let model = env_string("CALLCRAFT_CALLER_MODEL")
-            .or_else(|| manifest.and_then(|manifest| manifest.default_model.map(str::to_string)))
-            .unwrap_or_default();
-        let api_key = env_string("CALLCRAFT_CALLER_API_KEY");
-
-        Some(Self {
-            provider_id: Some(id),
-            kind: Some(kind),
-            base_url,
-            model,
-            api_key,
-        })
+        build_caller(
+            &id,
+            url,
+            env_string("CALLCRAFT_CALLER_MODEL"),
+            env_string("CALLCRAFT_CALLER_API_KEY"),
+        )
+        .ok()
     }
 
-    /// Load environment first, then the stored config and its key.
+    /// Load environment first, then the stored config and its key. A selected
+    /// environment path that fails validation fails closed; it never falls
+    /// through to an unrelated stored provider.
     pub fn load(store: &SettingsStore) -> Self {
-        if let Some(provider_id) = env_string("CALLCRAFT_CALLER_PROVIDER")
-            && find(&provider_id).is_none()
-        {
+        let env_selected = env_string("CALLCRAFT_CALLER_PROVIDER").is_some()
+            || env_string("CALLCRAFT_CALLER_URL").is_some();
+        if env_selected {
+            return Self::from_env().unwrap_or_default();
+        }
+        let Some(stored) = store.load() else {
             return Self::default();
-        }
-        if let Some(config) = Self::from_env() {
-            return config;
-        }
-        if let Some(stored) = store.load() {
-            let Some(manifest) = find(&stored.provider_id) else {
-                return Self::default();
-            };
-            let base_url = if stored.base_url.trim().is_empty() {
-                manifest
-                    .default_base_url
-                    .map(str::to_string)
-                    .unwrap_or_default()
-            } else {
-                stored.base_url
-            };
-            let env_provider = env_string("CALLCRAFT_CALLER_PROVIDER");
-            let api_key = env_string("CALLCRAFT_CALLER_API_KEY")
-                .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
-                .or_else(|| store.load_key(&stored.provider_id));
-            return Self {
-                provider_id: Some(stored.provider_id),
-                kind: Some(manifest.kind),
-                base_url,
-                model: if stored.model.trim().is_empty() {
-                    manifest
-                        .default_model
-                        .map(str::to_string)
-                        .unwrap_or_default()
-                } else {
-                    stored.model
-                },
-                api_key,
-            };
-        }
-        Self::default()
+        };
+        let env_provider = env_string("CALLCRAFT_CALLER_PROVIDER");
+        let api_key = env_string("CALLCRAFT_CALLER_API_KEY")
+            .filter(|_| env_provider.as_deref() == Some(stored.provider_id.as_str()))
+            .or_else(|| store.load_key(&stored.provider_id));
+        build_caller(
+            &stored.provider_id,
+            Some(stored.base_url),
+            Some(stored.model),
+            api_key,
+        )
+        .unwrap_or_default()
     }
 }
 
-pub fn config_from_request(
+fn build_caller(
     provider_id: &str,
     base_url: Option<String>,
     model: Option<String>,
@@ -273,6 +241,15 @@ pub fn config_from_request(
         model,
         api_key,
     })
+}
+
+pub fn config_from_request(
+    provider_id: &str,
+    base_url: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Result<CallerConfig, String> {
+    build_caller(provider_id, base_url, model, api_key)
 }
 
 #[derive(Debug)]
