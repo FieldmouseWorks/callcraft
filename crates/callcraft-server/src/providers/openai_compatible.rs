@@ -27,6 +27,11 @@ pub async fn complete(
     system: &str,
     user: &str,
 ) -> Result<String, ProviderError> {
+    if config.model.trim().is_empty() {
+        return Err(ProviderError::Invalid(
+            "provider model is required".to_string(),
+        ));
+    }
     if config.base_url.trim().is_empty() {
         return Err(ProviderError::Invalid(
             "OpenAI-compatible base URL is empty".to_string(),

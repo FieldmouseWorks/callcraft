@@ -192,9 +192,9 @@ fn style_rank(style: &str) -> u8 {
 }
 
 fn clamp_style(style: &str, ceiling: &str) -> &'static str {
-    match (style, style_rank(style) <= style_rank(ceiling)) {
-        ("anxious", true) => "anxious",
-        ("distressed", true) => "distressed",
+    match style_rank(style).min(style_rank(ceiling)) {
+        2 => "distressed",
+        1 => "anxious",
         _ => "neutral",
     }
 }
@@ -328,5 +328,105 @@ fn disclosure_label(disclosure: Disclosure) -> &'static str {
         Disclosure::IfAsked => "if_asked",
         Disclosure::NeverUnless => "never_unless",
         Disclosure::AfterEvent => "after_event",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use callcraft_core::scenario::Disclosure;
+    use callcraft_core::validate_yaml;
+
+    fn scenario() -> Scenario {
+        validate_yaml(
+            include_str!("../../../examples/chest-pain-001.scenario.yaml"),
+            false,
+        )
+        .expect("example validates")
+        .scenario
+    }
+
+    fn decision(fact_ids: &[&str], style: &str) -> Decision {
+        Decision {
+            fact_ids: fact_ids.iter().map(|id| (*id).to_string()).collect(),
+            style: Some(style.to_string()),
+        }
+    }
+
+    fn set_disclosure(
+        scenario: &mut Scenario,
+        id: &str,
+        disclosure: Disclosure,
+        triggers: &[&str],
+    ) {
+        let fact = scenario
+            .facts
+            .iter_mut()
+            .find(|fact| fact.id == id)
+            .expect("fact exists");
+        fact.disclosure = disclosure;
+        fact.triggers = triggers
+            .iter()
+            .map(|trigger| (*trigger).to_string())
+            .collect();
+    }
+
+    #[test]
+    fn never_unless_requires_a_trigger_in_the_latest_turn() {
+        let mut scenario = scenario();
+        set_disclosure(
+            &mut scenario,
+            "address",
+            Disclosure::NeverUnless,
+            &["secret"],
+        );
+        let decision = decision(&["address"], "neutral");
+        assert!(matches!(
+            render(&decision, &scenario, &[], "hello", &[], 0.0, true),
+            Err(CallerError::Decision(_))
+        ));
+        assert!(render(&decision, &scenario, &[], "my secret", &[], 0.0, true).is_ok());
+    }
+
+    #[test]
+    fn volunteer_is_only_allowed_on_the_opening_turn() {
+        let mut scenario = scenario();
+        set_disclosure(&mut scenario, "address", Disclosure::Volunteer, &[]);
+        let decision = decision(&["address"], "neutral");
+        assert!(matches!(
+            render(&decision, &scenario, &[], "hello", &[], 0.0, false),
+            Err(CallerError::Decision(_))
+        ));
+        assert!(render(&decision, &scenario, &[], "hello", &[], 0.0, true).is_ok());
+    }
+
+    #[test]
+    fn repeat_is_derived_from_the_disclosed_set() {
+        let scenario = scenario();
+        let repeat = decision(&["address"], "repeat");
+        assert!(matches!(
+            render(&repeat, &scenario, &[], "where?", &[], 0.0, true),
+            Err(CallerError::Decision(_))
+        ));
+
+        let disclosed = vec!["address".to_string()];
+        let (text, _) = render(&repeat, &scenario, &[], "where?", &disclosed, 0.0, true)
+            .expect("repeat after disclosure");
+        assert!(text.contains("already told you"));
+
+        let neutral = decision(&["address"], "neutral");
+        let (text, _) = render(&neutral, &scenario, &[], "where?", &disclosed, 0.0, true)
+            .expect("derived repeat");
+        assert!(text.contains("already told you"));
+    }
+
+    #[test]
+    fn style_is_clamped_to_the_authored_timeline() {
+        let scenario = scenario();
+        let distressed = decision(&["address"], "distressed");
+        let (text, _) =
+            render(&distressed, &scenario, &[], "where?", &[], 0.0, true).expect("clamped style");
+        assert!(text.contains("Please hurry"));
+        assert!(!text.contains("... please..."));
     }
 }

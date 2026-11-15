@@ -6,10 +6,10 @@ speech providers follow the same pattern next.
 
 ## Registry
 
-| Provider id | API shape | Auth | Subscription OAuth |
+| Provider id | API shape | Auth | Subscription OAuth policy |
 |---|---|---|---|
-| `openai` | OpenAI chat completions | API key | Partner-gated (`Sign in with ChatGPT`) |
-| `anthropic` | Anthropic Messages | API key | **Prohibited** for third-party apps |
+| `openai` | OpenAI chat completions | API key | Partner-gated (`Sign in with ChatGPT`); not implemented |
+| `anthropic` | Anthropic Messages | API key | **Prohibited** for third-party apps; not implemented |
 | `openai-compatible` | OpenAI chat completions | Optional API key | Not applicable |
 | `ollama` | OpenAI-compatible local | None | Not applicable |
 | `llama-cpp` | OpenAI-compatible local | None | Not applicable |
@@ -47,8 +47,10 @@ Environment variables:
 |---|---|
 | `CALLCRAFT_CALLER_PROVIDER` | Provider id from the registry. Defaults to `openai-compatible` when only a URL is set. |
 | `CALLCRAFT_CALLER_URL` | Base URL override. |
-| `CALLCRAFT_CALLER_MODEL` | Model name (default `default`). |
+| `CALLCRAFT_CALLER_MODEL` | Model name. Required; there is no invented default. |
 | `CALLCRAFT_CALLER_API_KEY` | API key for environment-based deployments. |
+| `CALLCRAFT_CALLER_TIMEOUT_MS` | Per-decision budget; default 5000 ms. |
+| `CALLCRAFT_ALLOW_INSECURE_ADAPTERS` | Set to `1` only to allow plaintext HTTP to a non-local endpoint. |
 
 Stored configuration:
 
@@ -73,8 +75,9 @@ is never written to the config file or a report.
   example scenario, validates and renders the decision, and reports model,
   latency, chosen fact ids, style, and rendered caller text. It does not save.
 - `POST /api/providers/configure` — validates, stores the non-secret config and
-  key (if supplied), and switches the live caller. A blank key keeps an existing
-  stored key.
+  key (if supplied), and switches the live caller. A blank key reuses an existing
+  stored key only when the requested base URL matches the origin that key is
+  bound to; a changed origin requires a new key.
 - `POST /api/providers/reset` — switches to the deterministic caller and clears
   the stored config. Provider keys remain in the keychain.
 
@@ -82,11 +85,31 @@ is never written to the config file or a report.
 
 - Local providers are the public-safety default; cloud endpoints are explicit
   opt-in.
+- Non-loopback provider endpoints must use HTTPS. Plaintext HTTP is accepted for
+  loopback and private-network addresses; `CALLCRAFT_ALLOW_INSECURE_ADAPTERS=1`
+  is the explicit escape hatch for unusual deployments.
+- API keys are bound to the configured provider origin. A stored key is never
+  sent to a request-supplied base URL that differs from its stored origin.
+- Local-only presets (`ollama`, `llama-cpp`, `lm-studio`, `vllm`, `whisper-cpp`,
+  `piper`) reject a remote base URL; use `openai-compatible` for an arbitrary
+  remote endpoint.
+- Environment API keys are only used when the matching provider environment
+  variable is set; a stored provider otherwise uses its keychain key.
+- Unknown provider ids and unknown environment provider ids fail closed instead
+  of falling back to another adapter.
 - No telemetry.
 - Keys are never returned by the API, logged, or written to reports.
 - Cloud providers receive the persona, fact list, transcript, and latest trainee
   line. Agency policy decides whether that data path is allowed.
 - The test endpoint uses the embedded, synthetic example scenario only.
+
+## Preset coverage
+
+The registry is contract-tested for unique ids, required metadata, HTTPS docs
+links, and local-only presets; the OpenAI-compatible and Anthropic adapter
+shapes are exercised against local mock servers. Cloud presets are not tested
+against live vendor accounts in CI. Run `POST /api/providers/test` with the
+agency's own account and model before relying on one in a class.
 
 ## OAuth roadmap
 

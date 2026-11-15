@@ -12,7 +12,7 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::{AuthKind, SettingsStore, StoredSpeech};
+use crate::providers::{AuthKind, Locality, SettingsStore, StoredSpeech};
 
 pub const STT_TEST_AUDIO: &[u8] = include_bytes!("../../../../assets/stt-test.webm");
 pub const STT_TEST_MIME: &str = "audio/webm";
@@ -45,6 +45,7 @@ pub struct SttManifest {
     pub label: &'static str,
     pub api: SttApi,
     pub auth: AuthKind,
+    pub locality: Locality,
     pub default_base_url: Option<&'static str>,
     pub default_model: Option<&'static str>,
     pub docs_url: &'static str,
@@ -57,6 +58,7 @@ pub struct TtsManifest {
     pub label: &'static str,
     pub api: TtsApi,
     pub auth: AuthKind,
+    pub locality: Locality,
     pub default_base_url: Option<&'static str>,
     pub default_model: Option<&'static str>,
     pub default_voice: Option<&'static str>,
@@ -70,6 +72,7 @@ pub const STT_PROVIDERS: &[SttManifest] = &[
         label: "OpenAI-compatible STT",
         api: SttApi::OpenAiCompatible,
         auth: AuthKind::OptionalApiKey,
+        locality: Locality::Configurable,
         default_base_url: None,
         default_model: Some("whisper-1"),
         docs_url: "https://platform.openai.com/docs/guides/speech-to-text",
@@ -80,6 +83,7 @@ pub const STT_PROVIDERS: &[SttManifest] = &[
         label: "OpenAI transcription",
         api: SttApi::OpenAiCompatible,
         auth: AuthKind::ApiKey,
+        locality: Locality::Remote,
         default_base_url: Some("https://api.openai.com"),
         default_model: Some("whisper-1"),
         docs_url: "https://platform.openai.com/docs/guides/speech-to-text",
@@ -90,6 +94,7 @@ pub const STT_PROVIDERS: &[SttManifest] = &[
         label: "whisper.cpp (local)",
         api: SttApi::OpenAiCompatible,
         auth: AuthKind::None,
+        locality: Locality::Local,
         default_base_url: Some("http://127.0.0.1:8080"),
         default_model: Some("whisper-1"),
         docs_url: "https://github.com/ggml-org/whisper.cpp",
@@ -100,6 +105,7 @@ pub const STT_PROVIDERS: &[SttManifest] = &[
         label: "ElevenLabs Scribe",
         api: SttApi::ElevenLabs,
         auth: AuthKind::ApiKey,
+        locality: Locality::Remote,
         default_base_url: Some("https://api.elevenlabs.io"),
         default_model: Some("scribe_v1"),
         docs_url: "https://elevenlabs.io/docs/speech-to-text",
@@ -110,6 +116,7 @@ pub const STT_PROVIDERS: &[SttManifest] = &[
         label: "Deepgram",
         api: SttApi::Deepgram,
         auth: AuthKind::ApiKey,
+        locality: Locality::Remote,
         default_base_url: Some("https://api.deepgram.com"),
         default_model: Some("nova-3"),
         docs_url: "https://developers.deepgram.com/docs",
@@ -123,6 +130,7 @@ pub const TTS_PROVIDERS: &[TtsManifest] = &[
         label: "OpenAI-compatible TTS",
         api: TtsApi::OpenAiCompatible,
         auth: AuthKind::OptionalApiKey,
+        locality: Locality::Configurable,
         default_base_url: None,
         default_model: Some("tts-1"),
         default_voice: Some("alloy"),
@@ -134,6 +142,7 @@ pub const TTS_PROVIDERS: &[TtsManifest] = &[
         label: "OpenAI speech",
         api: TtsApi::OpenAiCompatible,
         auth: AuthKind::ApiKey,
+        locality: Locality::Remote,
         default_base_url: Some("https://api.openai.com"),
         default_model: Some("tts-1"),
         default_voice: Some("alloy"),
@@ -145,6 +154,7 @@ pub const TTS_PROVIDERS: &[TtsManifest] = &[
         label: "ElevenLabs",
         api: TtsApi::ElevenLabs,
         auth: AuthKind::ApiKey,
+        locality: Locality::Remote,
         default_base_url: Some("https://api.elevenlabs.io"),
         default_model: Some("eleven_multilingual_v2"),
         default_voice: None,
@@ -156,6 +166,7 @@ pub const TTS_PROVIDERS: &[TtsManifest] = &[
         label: "Piper (local, via shim)",
         api: TtsApi::OpenAiCompatible,
         auth: AuthKind::None,
+        locality: Locality::Local,
         default_base_url: None,
         default_model: Some("tts-1"),
         default_voice: Some("default"),
@@ -380,6 +391,7 @@ pub fn stt_from_request(
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .ok_or_else(|| format!("{} requires a base URL", manifest.label))?;
     crate::providers::ensure_safe_base_url(&base_url)?;
+    crate::providers::ensure_locality(&base_url, manifest.locality)?;
     Ok(SttConfig {
         provider_id: Some(manifest.id.to_string()),
         api: manifest.api,
@@ -409,6 +421,7 @@ pub fn tts_from_request(
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .ok_or_else(|| format!("{} requires a base URL", manifest.label))?;
     crate::providers::ensure_safe_base_url(&base_url)?;
+    crate::providers::ensure_locality(&base_url, manifest.locality)?;
     let voice = clean(voice).or_else(|| manifest.default_voice.map(str::to_string));
     if manifest.api == TtsApi::ElevenLabs && voice.is_none() {
         return Err("ElevenLabs requires a voice id".to_string());
@@ -463,4 +476,45 @@ fn clean(value: Option<String>) -> Option<String> {
 
 fn env_string(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn speech_registries_are_consistent() {
+        let mut stt_ids = HashSet::new();
+        for provider in STT_PROVIDERS {
+            assert!(
+                stt_ids.insert(provider.id),
+                "duplicate STT id {}",
+                provider.id
+            );
+            assert!(provider.docs_url.starts_with("https://"));
+            assert!(!provider.label.trim().is_empty());
+            if provider.locality == Locality::Local
+                && let Some(base) = provider.default_base_url
+            {
+                assert!(crate::providers::ensure_locality(base, provider.locality).is_ok());
+            }
+        }
+
+        let mut tts_ids = HashSet::new();
+        for provider in TTS_PROVIDERS {
+            assert!(
+                tts_ids.insert(provider.id),
+                "duplicate TTS id {}",
+                provider.id
+            );
+            assert!(provider.docs_url.starts_with("https://"));
+            assert!(!provider.label.trim().is_empty());
+            if provider.locality == Locality::Local
+                && let Some(base) = provider.default_base_url
+            {
+                assert!(crate::providers::ensure_locality(base, provider.locality).is_ok());
+            }
+        }
+    }
 }

@@ -35,11 +35,11 @@ pub enum AuthKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SubscriptionOAuth {
-    NotApplicable,
-    PartnerGated,
-    Prohibited,
+#[serde(rename_all = "lowercase")]
+pub enum Locality {
+    Local,
+    Remote,
+    Configurable,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -48,8 +48,9 @@ pub struct ProviderManifest {
     pub label: &'static str,
     pub kind: ProviderKind,
     pub auth: AuthKind,
-    pub subscription_oauth: SubscriptionOAuth,
+    pub locality: Locality,
     pub default_base_url: Option<&'static str>,
+    pub default_model: Option<&'static str>,
     pub docs_url: &'static str,
     pub note: &'static str,
 }
@@ -60,7 +61,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "OpenAI API",
         kind: ProviderKind::OpenAi,
         auth: AuthKind::ApiKey,
-        subscription_oauth: SubscriptionOAuth::PartnerGated,
+        locality: Locality::Remote,
+        default_model: None,
         default_base_url: Some("https://api.openai.com"),
         docs_url: "https://platform.openai.com/docs",
         note: "API key. Sign in with ChatGPT plan usage is partner-gated.",
@@ -70,7 +72,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "Anthropic API",
         kind: ProviderKind::Anthropic,
         auth: AuthKind::ApiKey,
-        subscription_oauth: SubscriptionOAuth::Prohibited,
+        locality: Locality::Remote,
+        default_model: None,
         default_base_url: Some("https://api.anthropic.com"),
         docs_url: "https://docs.anthropic.com",
         note: "API key only. Consumer subscription OAuth is prohibited for third-party apps.",
@@ -80,7 +83,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "OpenAI-compatible endpoint",
         kind: ProviderKind::OpenAiCompatible,
         auth: AuthKind::OptionalApiKey,
-        subscription_oauth: SubscriptionOAuth::NotApplicable,
+        locality: Locality::Configurable,
+        default_model: None,
         default_base_url: None,
         docs_url: "https://platform.openai.com/docs/api-reference/chat",
         note: "Any server exposing /v1/chat/completions, with or without a key.",
@@ -90,7 +94,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "Ollama (local)",
         kind: ProviderKind::OpenAiCompatible,
         auth: AuthKind::None,
-        subscription_oauth: SubscriptionOAuth::NotApplicable,
+        locality: Locality::Local,
+        default_model: None,
         default_base_url: Some("http://127.0.0.1:11434/v1"),
         docs_url: "https://ollama.com",
         note: "Local model runner; no key, no cloud data path.",
@@ -100,7 +105,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "llama.cpp server (local)",
         kind: ProviderKind::OpenAiCompatible,
         auth: AuthKind::None,
-        subscription_oauth: SubscriptionOAuth::NotApplicable,
+        locality: Locality::Local,
+        default_model: None,
         default_base_url: Some("http://127.0.0.1:8080/v1"),
         docs_url: "https://github.com/ggml-org/llama.cpp",
         note: "Local model runner; no key, no cloud data path.",
@@ -110,7 +116,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "LM Studio (local)",
         kind: ProviderKind::OpenAiCompatible,
         auth: AuthKind::None,
-        subscription_oauth: SubscriptionOAuth::NotApplicable,
+        locality: Locality::Local,
+        default_model: None,
         default_base_url: Some("http://127.0.0.1:1234/v1"),
         docs_url: "https://lmstudio.ai",
         note: "Local model runner; no key, no cloud data path.",
@@ -120,7 +127,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "vLLM (local)",
         kind: ProviderKind::OpenAiCompatible,
         auth: AuthKind::None,
-        subscription_oauth: SubscriptionOAuth::NotApplicable,
+        locality: Locality::Local,
+        default_model: None,
         default_base_url: Some("http://127.0.0.1:8000/v1"),
         docs_url: "https://docs.vllm.ai",
         note: "Local model runner; no key, no cloud data path.",
@@ -130,7 +138,8 @@ pub const PROVIDERS: &[ProviderManifest] = &[
         label: "OpenRouter",
         kind: ProviderKind::OpenAiCompatible,
         auth: AuthKind::ApiKey,
-        subscription_oauth: SubscriptionOAuth::NotApplicable,
+        locality: Locality::Remote,
+        default_model: None,
         default_base_url: Some("https://openrouter.ai/api/v1"),
         docs_url: "https://openrouter.ai/docs",
         note: "One API key fronting many models; cloud data path.",
@@ -141,25 +150,13 @@ pub fn find(id: &str) -> Option<&'static ProviderManifest> {
     PROVIDERS.iter().find(|provider| provider.id == id)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CallerConfig {
     pub provider_id: Option<String>,
     pub kind: Option<ProviderKind>,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
-}
-
-impl Default for CallerConfig {
-    fn default() -> Self {
-        Self {
-            provider_id: None,
-            kind: None,
-            base_url: String::new(),
-            model: "default".to_string(),
-            api_key: None,
-        }
-    }
 }
 
 impl CallerConfig {
@@ -184,7 +181,9 @@ impl CallerConfig {
         let base_url = url
             .or_else(|| manifest.and_then(|manifest| manifest.default_base_url.map(str::to_string)))
             .unwrap_or_default();
-        let model = env_string("CALLCRAFT_CALLER_MODEL").unwrap_or_else(|| "default".to_string());
+        let model = env_string("CALLCRAFT_CALLER_MODEL")
+            .or_else(|| manifest.and_then(|manifest| manifest.default_model.map(str::to_string)))
+            .unwrap_or_default();
         let api_key = env_string("CALLCRAFT_CALLER_API_KEY");
 
         Some(Self {
@@ -227,7 +226,10 @@ impl CallerConfig {
                 kind: Some(manifest.kind),
                 base_url,
                 model: if stored.model.trim().is_empty() {
-                    "default".to_string()
+                    manifest
+                        .default_model
+                        .map(str::to_string)
+                        .unwrap_or_default()
                 } else {
                     stored.model
                 },
@@ -257,10 +259,12 @@ pub fn config_from_request(
         .or_else(|| manifest.default_base_url.map(str::to_string))
         .ok_or_else(|| format!("{} requires a base URL", manifest.label))?;
     ensure_safe_base_url(&base_url)?;
+    ensure_locality(&base_url, manifest.locality)?;
     let model = model
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "default".to_string());
+        .or_else(|| manifest.default_model.map(str::to_string))
+        .ok_or_else(|| format!("{} requires a model", manifest.label))?;
 
     Ok(CallerConfig {
         provider_id: Some(manifest.id.to_string()),
@@ -286,6 +290,20 @@ impl ProviderError {
 
     pub fn is_invalid(&self) -> bool {
         matches!(self, ProviderError::Invalid(_))
+    }
+}
+
+/// Enforce that a local-only preset is not pointed at a remote host.
+pub fn ensure_locality(base_url: &str, locality: Locality) -> Result<(), String> {
+    if locality != Locality::Local {
+        return Ok(());
+    }
+    let url = url::Url::parse(base_url).map_err(|error| format!("invalid base URL: {error}"))?;
+    let host = url.host_str().unwrap_or_default();
+    if is_loopback_or_private(host) {
+        Ok(())
+    } else {
+        Err("this preset is local-only; use openai-compatible for a remote endpoint".to_string())
     }
 }
 
@@ -586,6 +604,7 @@ fn env_string(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn stored_config_round_trips() {
@@ -619,5 +638,33 @@ mod tests {
             config_from_request("ollama", None, Some("llama3".into()), None).expect("local config");
         assert_eq!(config.kind, Some(ProviderKind::OpenAiCompatible));
         assert_eq!(config.base_url, "http://127.0.0.1:11434/v1");
+    }
+    #[test]
+    fn caller_registry_is_consistent() {
+        let mut ids = HashSet::new();
+        for provider in PROVIDERS {
+            assert!(
+                ids.insert(provider.id),
+                "duplicate provider id {}",
+                provider.id
+            );
+            assert!(!provider.label.trim().is_empty());
+            assert!(provider.docs_url.starts_with("https://"));
+            assert!(
+                provider
+                    .default_base_url
+                    .is_none_or(|url| url.starts_with("http"))
+            );
+            if provider.locality == Locality::Local {
+                let base = provider
+                    .default_base_url
+                    .expect("local presets have a base URL");
+                assert!(
+                    ensure_locality(base, provider.locality).is_ok(),
+                    "local preset {} points at a remote host",
+                    provider.id
+                );
+            }
+        }
     }
 }

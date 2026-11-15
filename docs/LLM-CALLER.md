@@ -30,10 +30,11 @@ validated paraphrase layer can be added later behind the same decision contract.
 
 `POST {CALLCRAFT_CALLER_URL}/v1/chat/completions`
 
-Request is OpenAI-compatible chat completions with `temperature: 0`, a system
-prompt containing the persona, timeline state, closed fact list, disclosure
-rules, recorded events, and recent transcript; the trainee's latest line is the
-user message.
+Request is the provider's chat/messages shape with a system prompt containing
+the persona, timeline state, closed fact list, disclosure rules, recorded
+events, and recent transcript; the trainee's latest line is the user message.
+No sampling parameters are sent, because current provider APIs disagree on
+which ones they accept.
 
 The response content must be JSON:
 
@@ -49,13 +50,20 @@ The server responds with `caller_source: "llm"` and the rendered text.
 
 ## Validation and fallback
 
-- Unknown fact id, more than two ids, or an `after_event` fact whose required
-  event has not been recorded: the decision is rejected, the session's
-  `drift_rejections` counter increments, and the turn falls back to the
-  deterministic engine.
-- Transport error, timeout, malformed JSON, or no choices: fallback to the
-  deterministic engine without incrementing drift. `caller_error` reports the
-  reason in the turn response.
+- A rejected decision increments `drift_rejections` and falls back to the
+  deterministic engine. Rejections include: unknown fact id, more than two ids,
+  an `after_event` fact before its event, a `never_unless` fact without a
+  matching trigger in the trainee's latest line, a `volunteer` fact after the
+  opening turn, or `repeat` for a fact not yet disclosed.
+- `repeat` is derived from the disclosed set: once every selected fact has been
+  disclosed, the rendered line is a repeat even if the model returned another
+  style. Selecting `repeat` for an undisclosed fact is rejected.
+- Style is clamped to the authored timeline state. A model cannot make the
+  caller more distressed than the scenario says it is at that moment.
+- Malformed JSON, a response with no choices/content, or a provider HTTP error
+  increments `adapter_failures` and falls back. Transport failures also count
+  toward a per-session breaker: after three, the caller runs deterministically
+  for the rest of that session. Reconfiguring the provider resets the breaker.
 - A rejected decision is a defect in the adapter, not in the trainee's score.
   Scoring still runs from the transcript and rubric.
 
@@ -68,10 +76,13 @@ path; environment variables are for CLI and consortium deployments:
 |---|---|
 | `CALLCRAFT_CALLER_PROVIDER` | Provider id (`openai`, `anthropic`, `openai-compatible`, `ollama`, `llama-cpp`, `lm-studio`, `vllm`, `openrouter`). |
 | `CALLCRAFT_CALLER_URL` | Base URL override. With no provider id, implies `openai-compatible`. |
-| `CALLCRAFT_CALLER_MODEL` | Model name (default `default`). |
+| `CALLCRAFT_CALLER_MODEL` | Model name. Required; no invented default. |
 | `CALLCRAFT_CALLER_API_KEY` | API key for environment-based deployments. |
+| `CALLCRAFT_CALLER_TIMEOUT_MS` | Per-decision budget; default 5000 ms. |
 
 Stored settings live in `callcraft/adapters.json`; keys live in the OS keychain.
+A stored key is bound to its configured base URL and is not sent to a different
+request-supplied origin. Non-loopback endpoints must use HTTPS.
 Anthropic consumer subscription OAuth is not available to third-party apps;
 OpenAI Sign in with ChatGPT is partner-gated. See
 [PROVIDERS.md](PROVIDERS.md).

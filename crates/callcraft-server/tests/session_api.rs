@@ -81,6 +81,18 @@ fn session_api_scores_a_good_call() {
         .expect("finish request");
     assert!(response.status().is_success());
     let finished: serde_json::Value = response.json().expect("finish JSON");
+    assert!(
+        finished["report"]["stages"]
+            .as_array()
+            .expect("stages")
+            .iter()
+            .any(|stage| stage["stage"] == "turn")
+    );
+    assert!(
+        finished["report"]["latency_ms"]["p50_ms"]
+            .as_u64()
+            .is_some()
+    );
     assert_eq!(finished["report"]["evaluation"]["overall"], "pass");
     assert_eq!(
         finished["report"]["evaluation"]["critical_failures"]

@@ -40,23 +40,40 @@ Environment variables (CLI/consortium deployments) win over stored settings:
 | `CALLCRAFT_STT_LANGUAGE` | Language hint (default `en`). |
 | `CALLCRAFT_TTS_VOICE` | Voice name or id. |
 | `CALLCRAFT_STT_API_KEY`, `CALLCRAFT_TTS_API_KEY` | API key. `CALLCRAFT_ADAPTER_TOKEN` remains a fallback. |
+| `CALLCRAFT_STT_TIMEOUT_MS`, `CALLCRAFT_TTS_TIMEOUT_MS` | Per-stage request budget; default 8000 ms. |
+| `CALLCRAFT_ALLOW_INSECURE_ADAPTERS` | Set to `1` only to allow plaintext HTTP to a non-local endpoint. |
 
 Stored settings live in `callcraft/speech.json` next to the caller config. API
 keys live in the OS keychain under `stt:<provider>` and `tts:<provider>`; the
-key file never contains a secret.
+key file never contains a secret. A stored key is bound to its configured base
+URL and is not sent to a different request-supplied origin. Non-loopback
+endpoints must use HTTPS. Local-only presets reject a remote base URL; use
+`openai-compatible` for an arbitrary remote endpoint.
+
+STT and TTS APIs are separate types (`SttApi`, `TtsApi`), so a provider that only
+transcribes cannot be selected for synthesis. Deepgram is STT-only.
 
 ## API
 
 - `GET /api/speech/providers` — both registries plus active config.
 - `POST /api/speech/test` — `{kind: "stt"|"tts", provider_id, base_url, model,
   language?, voice?, api_key?}`.
-  - STT tests with the bundled synthetic WAV in `assets/stt-test.wav`.
+  - STT tests with the bundled synthetic WebM/Opus clip in
+    `assets/stt-test.webm` — the same container a browser MediaRecorder sends.
   - TTS synthesizes "Callcraft voice connection test." and returns the audio
     bytes as base64 so the UI can play it.
   - Neither endpoint stores audio.
 - `POST /api/speech/configure` — validates, stores the config and key, and
   switches the live direction.
 - `POST /api/speech/reset` — `{kind}` clears that direction.
+
+## Preset coverage
+
+The STT and TTS registries are contract-tested for unique ids, metadata, and
+local-only presets; the OpenAI-compatible, ElevenLabs, and Deepgram request
+shapes have adapter tests against mock servers. Cloud presets are not tested
+against live vendor accounts in CI. Run `POST /api/speech/test` with the
+agency's own account before a class.
 
 ## Tone and steering: there is no universal standard
 

@@ -177,10 +177,16 @@ scenario can be shared without leaking a jurisdiction's map data.
     ],
     "critical_failures": [],
     "human_overrides": [],
-    "drift_rejections": 0
+    "drift_rejections": 0,
+    "adapter_failures": 0
   },
+  "stages": [
+    {"stage": "stt", "ms": 340},
+    {"stage": "turn", "ms": 820},
+    {"stage": "tts", "ms": 460}
+  ],
   "cost": {"stt_usd": 0.04, "llm_usd": 0.11, "tts_usd": 0.22, "total_usd": 0.37},
-  "latency_ms": {"p50": 820, "p95": 1400}
+  "latency_ms": {"p50_ms": 820, "p95_ms": 1400}
 }
 ```
 

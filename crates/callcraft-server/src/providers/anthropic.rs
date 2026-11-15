@@ -33,6 +33,11 @@ pub async fn complete(
         .as_deref()
         .filter(|key| !key.trim().is_empty())
         .ok_or_else(|| ProviderError::Invalid("Anthropic requires an API key".to_string()))?;
+    if config.model.trim().is_empty() {
+        return Err(ProviderError::Invalid(
+            "provider model is required".to_string(),
+        ));
+    }
     if config.base_url.trim().is_empty() {
         return Err(ProviderError::Invalid(
             "Anthropic base URL is empty".to_string(),

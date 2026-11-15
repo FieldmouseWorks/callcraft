@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use axum::routing::post;
 use axum::{Json, Router};
-use callcraft_server::providers::SettingsStore;
+use callcraft_server::providers::{ProviderKind, SettingsStore};
 use callcraft_server::speech::SpeechConfig;
 use callcraft_server::{CallerConfig, start_with_adapters_and_store};
 use serde_json::{Value, json};
@@ -90,8 +90,8 @@ fn provider_registry_exposes_auth_reality() {
         .iter()
         .find(|provider| provider["id"] == "openai")
         .expect("openai");
-    assert_eq!(anthropic["subscription_oauth"], "prohibited");
-    assert_eq!(openai["subscription_oauth"], "partner-gated");
+    assert_eq!(anthropic["auth"], "api-key");
+    assert_eq!(openai["auth"], "api-key");
     assert_eq!(listing["keyring"], json!(false));
     assert_eq!(listing["active"]["enabled"], json!(false));
 }
@@ -197,4 +197,130 @@ fn configure_switches_the_live_caller() {
         .expect("turn JSON");
     assert_eq!(turn["caller_source"], "llm");
     assert_eq!(turn["caller"], "1234 Firwood Lane, Cedar Hollow");
+}
+
+#[test]
+fn api_rejects_foreign_host_and_query_token() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SettingsStore::with_path(dir.path().join("adapters.json"), false);
+    let (port, _handle) = start_server("test-token", store);
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::blocking::Client::new();
+
+    let foreign = client
+        .get(format!("{base}/api/providers"))
+        .header("Host", "localhost.evil.com")
+        .header("X-Callcraft-Token", "test-token")
+        .send()
+        .expect("foreign host request");
+    assert_eq!(foreign.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let query = client
+        .get(format!("{base}/api/providers?token=test-token"))
+        .send()
+        .expect("query token request");
+    assert_eq!(query.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let localhost = client
+        .get(format!("{base}/api/providers"))
+        .header("Host", format!("localhost:{port}"))
+        .header("X-Callcraft-Token", "test-token")
+        .send()
+        .expect("localhost request");
+    assert_eq!(localhost.status(), reqwest::StatusCode::OK);
+}
+
+#[test]
+fn stored_key_only_follows_matching_origin() {
+    let original_port = spawn(Router::new().route("/v1/messages", post(anthropic_decision)));
+    let other_port = spawn(Router::new().route("/v1/messages", post(anthropic_decision)));
+    let original = CallerConfig {
+        provider_id: Some("anthropic".to_string()),
+        kind: Some(ProviderKind::Anthropic),
+        base_url: format!("http://127.0.0.1:{original_port}"),
+        model: "mock".to_string(),
+        api_key: Some("stored-secret".to_string()),
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SettingsStore::with_path(dir.path().join("adapters.json"), false);
+    let (port, _handle) = start_with_adapters_and_store(
+        0,
+        "test-token".to_string(),
+        SpeechConfig::default(),
+        original,
+        store,
+    )
+    .expect("server starts");
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::blocking::Client::new();
+
+    let same_origin: Value = client
+        .post(format!("{base}/api/providers/test"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "provider_id": "anthropic",
+            "base_url": format!("http://127.0.0.1:{original_port}"),
+            "model": "mock"
+        }))
+        .send()
+        .expect("same origin test")
+        .json()
+        .expect("same origin JSON");
+    assert_eq!(same_origin["ok"], json!(true));
+
+    let changed_origin = client
+        .post(format!("{base}/api/providers/test"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "provider_id": "anthropic",
+            "base_url": format!("http://127.0.0.1:{other_port}"),
+            "model": "mock"
+        }))
+        .send()
+        .expect("changed origin test");
+    assert_eq!(changed_origin.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[test]
+fn unsafe_endpoints_and_missing_models_are_rejected() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = SettingsStore::with_path(dir.path().join("adapters.json"), false);
+    let (port, _handle) = start_server("test-token", store);
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::blocking::Client::new();
+
+    let remote_http = client
+        .post(format!("{base}/api/providers/test"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "provider_id": "openai-compatible",
+            "base_url": "http://example.com",
+            "model": "mock"
+        }))
+        .send()
+        .expect("remote http test");
+    assert_eq!(remote_http.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let missing_model = client
+        .post(format!("{base}/api/providers/test"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "provider_id": "openai-compatible",
+            "base_url": "http://127.0.0.1:9"
+        }))
+        .send()
+        .expect("missing model test");
+    assert_eq!(missing_model.status(), reqwest::StatusCode::BAD_REQUEST);
+
+    let unknown = client
+        .post(format!("{base}/api/providers/test"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "provider_id": "typo",
+            "base_url": "http://127.0.0.1:9",
+            "model": "mock"
+        }))
+        .send()
+        .expect("unknown provider test");
+    assert_eq!(unknown.status(), reqwest::StatusCode::BAD_REQUEST);
 }
