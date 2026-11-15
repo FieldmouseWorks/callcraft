@@ -297,3 +297,81 @@ fn draft_scenarios_cannot_start_and_identical_save_keeps_approval() {
         .expect("changed JSON");
     assert_eq!(edited["scenario"]["status"], "draft");
 }
+
+#[test]
+fn creates_and_updates_a_named_pack_and_saves_into_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let settings = SettingsStore::with_path(dir.path().join("adapters.json"), false);
+    let packs = PackStore::with_root(dir.path().join("packs"));
+    let (port, _handle) = start_with_adapters_store_and_packs(
+        0,
+        "test-token".to_string(),
+        SpeechConfig::default(),
+        CallerConfig::default(),
+        settings,
+        packs,
+    )
+    .expect("server starts");
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::blocking::Client::new();
+    let scenario = read("examples/chest-pain-001.scenario.yaml");
+
+    let created: Value = client
+        .post(format!("{base}/api/packs"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "id": "cedar-county",
+            "name": "Cedar County training",
+            "visibility": "private",
+            "license": "proprietary",
+            "owner_agency": "Cedar County ECC",
+            "owner_contact": "Training Division"
+        }))
+        .send()
+        .expect("create pack")
+        .json()
+        .expect("create JSON");
+    assert_eq!(created["pack"]["id"], "cedar-county");
+
+    let updated: Value = client
+        .patch(format!("{base}/api/packs/cedar-county"))
+        .header("X-Callcraft-Token", "test-token")
+        .json(&json!({
+            "name": "Cedar County ECC training",
+            "visibility": "shareable",
+            "license": "CC-BY-4.0",
+            "owner_agency": "Cedar County",
+            "owner_contact": null
+        }))
+        .send()
+        .expect("update pack")
+        .json()
+        .expect("update JSON");
+    assert_eq!(updated["pack"]["name"], "Cedar County ECC training");
+    assert_eq!(updated["pack"]["visibility"], "shareable");
+
+    let saved: Value = client
+        .post(format!("{base}/api/packs/cedar-county/scenarios"))
+        .header("X-Callcraft-Token", "test-token")
+        .body(scenario)
+        .send()
+        .expect("save to named pack")
+        .json()
+        .expect("save JSON");
+    assert_eq!(saved["pack_id"], "cedar-county");
+
+    let listing: Value = client
+        .get(format!("{base}/api/packs"))
+        .header("X-Callcraft-Token", "test-token")
+        .send()
+        .expect("list packs")
+        .json()
+        .expect("list JSON");
+    let pack = listing["packs"]
+        .as_array()
+        .expect("packs")
+        .iter()
+        .find(|pack| pack["id"] == "cedar-county")
+        .expect("named pack");
+    assert_eq!(pack["scenarios"][0]["id"], "chest-pain-001");
+}

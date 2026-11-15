@@ -1,9 +1,9 @@
 # Agency packs
 
-Status: slices 1–3 implemented (PRs #13, #15, #16). Local storage, Save to
-pack, library browse/start, hash-bound approvals, approved-only starts, report
-stamping, `callcraft pack validate`, checksummed export/import with dry-run
-review, backups, rollback, and bounded YAML parsing.
+Status: slices 1–4 implemented. Local storage, pack creation/profile edits,
+multi-pack Save targets, library browse/start, hash-bound approvals,
+approved-only starts, report stamping, `callcraft pack validate`, checksummed
+export/import with dry-run review, backups, rollback, and bounded YAML parsing.
 
 An agency pack is a directory under the OS local-data directory. It is never
 committed to the repo and never uploaded by the app.
@@ -68,6 +68,10 @@ error.
 ## API
 
 - `GET /api/packs` — packs, scenarios, default pack id, sync-folder warning.
+- `POST /api/packs` — create a pack with `{id, name, visibility, license,
+  owner_agency, owner_contact}`.
+- `PATCH /api/packs/{pack_id}` — update display name, visibility, license, and
+  owner/contact. Pack ids are immutable.
 - `POST /api/packs/scenarios` — save YAML into the default pack.
 - `POST /api/packs/{pack_id}/scenarios` — save YAML into a named pack.
 - `GET /api/packs/{pack_id}/scenarios/{scenario_id}` — read YAML for editing.

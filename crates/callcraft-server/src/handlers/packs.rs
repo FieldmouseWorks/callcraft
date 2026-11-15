@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::AppState;
-use crate::packs::{ImportMode, ImportReport};
+use crate::packs::{ImportMode, ImportReport, NewPack, PackUpdate};
 use callcraft_core::pack::ApprovalStatus;
 
 #[derive(Debug, Default, Deserialize)]
@@ -249,6 +249,37 @@ fn set_approval(
         .set_approval(&pack_id, &scenario_id, status, &by, payload.note)
     {
         Ok(scenario) => Json(json!({"ok": true, "scenario": scenario})).into_response(),
+        Err(error) => error_response(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+pub(crate) async fn create_pack(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<NewPack>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    match state.packs.create_pack(payload) {
+        Ok(pack) => Json(json!({"ok": true, "pack": pack})).into_response(),
+        Err(error) => error_response(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+pub(crate) async fn update_pack(
+    State(state): State<AppState>,
+    Path(pack_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<TokenQuery>,
+    Json(payload): Json<PackUpdate>,
+) -> Response {
+    if let Some(response) = auth_guard(&state, &headers, &query) {
+        return response;
+    }
+    match state.packs.update_pack(&pack_id, payload) {
+        Ok(pack) => Json(json!({"ok": true, "pack": pack})).into_response(),
         Err(error) => error_response(StatusCode::BAD_REQUEST, &error),
     }
 }

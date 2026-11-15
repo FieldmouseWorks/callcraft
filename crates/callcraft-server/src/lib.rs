@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 
 use callcraft_core::CallerEngine;
 use callcraft_core::scenario::Scenario;
@@ -193,7 +193,11 @@ fn app(state: AppState) -> Router {
             "/api/scenario/render",
             post(handlers::scenario::render_scenario),
         )
-        .route("/api/packs", get(handlers::packs::list_packs))
+        .route(
+            "/api/packs",
+            get(handlers::packs::list_packs).post(handlers::packs::create_pack),
+        )
+        .route("/api/packs/{pack_id}", patch(handlers::packs::update_pack))
         .route(
             "/api/packs/scenarios",
             post(handlers::packs::save_default_scenario),

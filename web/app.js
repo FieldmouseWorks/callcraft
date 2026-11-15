@@ -30,6 +30,19 @@ const libraryExport = $("library-export");
 const libraryImport = $("library-import");
 const libraryRollback = $("library-rollback");
 const importReview = $("import-review");
+const libraryNewPack = $("library-new-pack");
+const libraryPackSettings = $("library-pack-settings");
+const packDialog = $("pack-dialog");
+const packForm = $("pack-form");
+const packDialogTitle = $("pack-dialog-title");
+const packIdInput = $("pack-id");
+const packNameInput = $("pack-name");
+const packVisibilityInput = $("pack-visibility");
+const packLicenseInput = $("pack-license");
+const packOwnerInput = $("pack-owner");
+const packContactInput = $("pack-contact");
+const packError = $("pack-error");
+const packSubmit = $("pack-submit");
 
 let sessionId = null;
 let scenarioId = null;
@@ -45,6 +58,7 @@ let libraryPacks = [];
 let libraryWarning = "";
 let pendingImportBytes = null;
 let pendingImportReport = null;
+let packDialogMode = "create";
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -321,6 +335,7 @@ function selectedPack() {
 function renderLibrary() {
   const pack = selectedPack();
   libraryExport.disabled = !pack;
+  libraryPackSettings.disabled = !pack;
   packPicker.hidden = libraryPacks.length <= 1;
   if (!pack) {
     libraryMeta.textContent = "";
@@ -477,6 +492,88 @@ function downloadBlob(blob, filename) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function openPackDialog(mode) {
+  const pack = selectedPack();
+  if (mode === "edit" && !pack) return;
+  packDialogMode = mode;
+  packError.hidden = true;
+  packError.textContent = "";
+  if (mode === "edit") {
+    packDialogTitle.textContent = "Pack settings";
+    packSubmit.textContent = "Save settings";
+    packIdInput.value = pack.id;
+    packIdInput.disabled = true;
+    packNameInput.value = pack.name || "";
+    packVisibilityInput.value = pack.visibility || "private";
+    packLicenseInput.value = pack.license || "proprietary";
+    packOwnerInput.value = pack.owner || "";
+    packContactInput.value = pack.owner_contact || "";
+  } else {
+    packDialogTitle.textContent = "New pack";
+    packSubmit.textContent = "Create pack";
+    packIdInput.value = "";
+    packIdInput.disabled = false;
+    packNameInput.value = "";
+    packVisibilityInput.value = "private";
+    packLicenseInput.value = "proprietary";
+    packOwnerInput.value = pack?.owner || "Local agency";
+    packContactInput.value = "";
+  }
+  packDialog.hidden = false;
+  (mode === "edit" ? packNameInput : packIdInput).focus();
+}
+
+function closePackDialog() {
+  packDialog.hidden = true;
+}
+
+async function submitPackForm(event) {
+  event.preventDefault();
+  const pack = selectedPack();
+  const id = packIdInput.value.trim();
+  const payload = {
+    name: packNameInput.value.trim(),
+    visibility: packVisibilityInput.value,
+    license: packLicenseInput.value.trim(),
+    owner_agency: packOwnerInput.value.trim(),
+    owner_contact: packContactInput.value.trim() || null,
+  };
+  if (!payload.name || !payload.license || !payload.owner_agency) {
+    packError.textContent = "Name, license, and owner agency are required.";
+    packError.hidden = false;
+    return;
+  }
+  packSubmit.disabled = true;
+  try {
+    let data;
+    if (packDialogMode === "edit") {
+      data = await api(`/api/packs/${encodeURIComponent(pack.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } else {
+      if (!id) {
+        throw new Error("Pack ID is required.");
+      }
+      data = await api("/api/packs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...payload }),
+      });
+    }
+    closePackDialog();
+    await loadLibrary();
+    libraryPack.value = data.pack.id;
+    renderLibrary();
+    setStatus(packDialogMode === "edit" ? "Pack settings saved" : "Pack created", "ok");
+  } catch (error) {
+    packError.textContent = error.message;
+    packError.hidden = false;
+  }
+  packSubmit.disabled = false;
 }
 
 async function exportPack() {
@@ -925,6 +1022,11 @@ $("load-example").addEventListener("click", loadExample);
 scenarioInput.addEventListener("input", updateBrief);
 libraryPack.addEventListener("change", renderLibrary);
 libraryExport.addEventListener("click", exportPack);
+libraryNewPack.addEventListener("click", () => openPackDialog("create"));
+libraryPackSettings.addEventListener("click", () => openPackDialog("edit"));
+$("pack-close").addEventListener("click", closePackDialog);
+$("pack-cancel").addEventListener("click", closePackDialog);
+packForm.addEventListener("submit", submitPackForm);
 libraryImport.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   event.target.value = "";

@@ -19,16 +19,14 @@ default.
 
 ## Now
 
-### Pack management and agency profile — next
+### Review evidence and library discovery — next
 
-- [ ] Create and rename packs.
-- [ ] Agency profile: name, visibility, license, owner/contact.
-- [ ] Multi-pack Save target instead of always the default pack.
-- [ ] Library tests for switching, empty/error packs, and target selection.
-- [ ] Event-evidence timestamps and a hideable observer margin.
+- [ ] Event evidence timestamps so a rubric event can anchor to the log.
+- [ ] A hideable observer margin for live runs.
+- [ ] Library search, tags, and status filters.
+- [ ] A library test pass for switching, empty/error packs, and target selection.
 
-Deferred until the pilot proves authoring: CSV bulk import, geography picker,
-and SOP extraction.
+Then bulk ingestion: CSV for facts/rubric/geography, then a geography picker.
 
 ## Shipped
 
@@ -65,6 +63,15 @@ and SOP extraction.
   evidence links, responsive 1280/800 layouts, accessibility repairs.
 - Design record: [DESIGN.md](DESIGN.md).
 - PR #12.
+
+### Pack management and agency profile
+
+- Pack creation with id, display name, visibility, license, owner agency, and
+  contact.
+- Pack settings/display-name edits; pack ids stay immutable.
+- Multi-pack Save target in Author; library pack switcher.
+- Empty and error pack states in the library.
+- PR pending.
 
 ### Approval and immutable content identity
 

@@ -8,7 +8,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -44,6 +44,7 @@ pub struct PackView {
     pub visibility: String,
     pub license: String,
     pub owner: String,
+    pub owner_contact: Option<String>,
     pub scenarios: Vec<ScenarioEntry>,
     pub error: Option<String>,
 }
@@ -73,6 +74,27 @@ pub struct SaveResult {
     pub pack_id: String,
     pub scenario: ScenarioEntry,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NewPack {
+    pub id: String,
+    pub name: String,
+    pub visibility: PackVisibility,
+    pub license: String,
+    pub owner_agency: String,
+    #[serde(default)]
+    pub owner_contact: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PackUpdate {
+    pub name: String,
+    pub visibility: PackVisibility,
+    pub license: String,
+    pub owner_agency: String,
+    #[serde(default)]
+    pub owner_contact: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +167,71 @@ impl PackStore {
             packs,
             warning: self.warning(),
         }
+    }
+
+    pub fn create_pack(&self, request: NewPack) -> Result<PackView, String> {
+        if !safe_id(&request.id) {
+            return Err(format!("invalid pack id '{}'", request.id));
+        }
+        let pack_dir = self.root.join(&request.id);
+        if pack_dir.exists() {
+            return Err(format!("pack '{}' already exists", request.id));
+        }
+        let manifest = PackManifest {
+            format: FORMAT_ID.to_string(),
+            id: request.id.clone(),
+            name: request.name.trim().to_string(),
+            version: "0.1.0".to_string(),
+            visibility: request.visibility,
+            license: request.license.trim().to_string(),
+            owner: PackOwner {
+                agency: request.owner_agency.trim().to_string(),
+                contact: clean_optional(request.owner_contact),
+            },
+            requires: PackRequires {
+                scenario_format: ">=0.1 <0.2".to_string(),
+            },
+            protocols: Vec::<ProtocolRef>::new(),
+            sources: PackSources { export: false },
+            exported: None,
+        };
+        manifest.validate()?;
+        fs::create_dir_all(pack_dir.join("scenarios"))
+            .map_err(|error| format!("create pack directory: {error}"))?;
+        write_private(
+            &pack_dir.join("callcraft-pack.yaml"),
+            &manifest.render_yaml()?,
+        )?;
+        Ok(self.read_pack(&request.id, &pack_dir))
+    }
+
+    pub fn update_pack(&self, pack_id: &str, request: PackUpdate) -> Result<PackView, String> {
+        if !safe_id(pack_id) {
+            return Err(format!("invalid pack id '{pack_id}'"));
+        }
+        let pack_dir = self.root.join(pack_id);
+        let manifest_path = pack_dir.join("callcraft-pack.yaml");
+        if !manifest_path.is_file() {
+            return Err(format!("pack '{pack_id}' is not installed"));
+        }
+        let mut manifest = PackManifest::parse_yaml(
+            &fs::read_to_string(&manifest_path)
+                .map_err(|error| format!("read pack manifest: {error}"))?,
+        )?;
+        if manifest.id != pack_id {
+            return Err(format!(
+                "pack manifest id '{}' does not match directory '{pack_id}'",
+                manifest.id
+            ));
+        }
+        manifest.name = request.name.trim().to_string();
+        manifest.visibility = request.visibility;
+        manifest.license = request.license.trim().to_string();
+        manifest.owner.agency = request.owner_agency.trim().to_string();
+        manifest.owner.contact = clean_optional(request.owner_contact);
+        manifest.validate()?;
+        write_private(&manifest_path, &manifest.render_yaml()?)?;
+        Ok(self.read_pack(pack_id, &pack_dir))
     }
 
     pub fn save_default(&self, yaml: &str) -> Result<SaveResult, String> {
@@ -312,6 +399,7 @@ impl PackStore {
                     visibility: String::new(),
                     license: String::new(),
                     owner: String::new(),
+                    owner_contact: None,
                     scenarios: Vec::new(),
                     error: Some(format!("read callcraft-pack.yaml: {error}")),
                 };
@@ -327,6 +415,7 @@ impl PackStore {
                     visibility: String::new(),
                     license: String::new(),
                     owner: String::new(),
+                    owner_contact: None,
                     scenarios: Vec::new(),
                     error: Some(error),
                 };
@@ -340,6 +429,7 @@ impl PackStore {
                 visibility: visibility_label(manifest.visibility).to_string(),
                 license: manifest.license,
                 owner: manifest.owner.agency,
+                owner_contact: manifest.owner.contact,
                 scenarios: Vec::new(),
                 error: Some(error),
             };
@@ -354,6 +444,7 @@ impl PackStore {
                     visibility: visibility_label(manifest.visibility).to_string(),
                     license: manifest.license,
                     owner: manifest.owner.agency,
+                    owner_contact: manifest.owner.contact,
                     scenarios: Vec::new(),
                     error: Some(error),
                 };
@@ -405,6 +496,7 @@ impl PackStore {
             visibility: visibility_label(manifest.visibility).to_string(),
             license: manifest.license,
             owner: manifest.owner.agency,
+            owner_contact: manifest.owner.contact,
             scenarios,
             error: None,
         }
@@ -531,6 +623,12 @@ pub fn validate_pack_dir(path: &Path) -> Result<PackView, String> {
         return Err(errors.join("\n"));
     }
     Ok(view)
+}
+
+fn clean_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn read_ledger(path: &Path) -> Result<ApprovalLedger, String> {
@@ -693,5 +791,60 @@ safety:
         assert!(store.save("other", &scenario_yaml("test-call")).is_err());
         assert!(store.save("local", &scenario_yaml("test-call")).is_ok());
         assert!(store.open("local", "../test-call").is_err());
+    }
+}
+
+#[cfg(test)]
+mod management_tests {
+    use super::*;
+    use callcraft_core::pack::PackVisibility;
+
+    fn request(id: &str) -> NewPack {
+        NewPack {
+            id: id.to_string(),
+            name: "Cedar County training".to_string(),
+            visibility: PackVisibility::Private,
+            license: "proprietary".to_string(),
+            owner_agency: "Cedar County ECC".to_string(),
+            owner_contact: Some("Training Division".to_string()),
+        }
+    }
+
+    #[test]
+    fn creates_and_updates_packs_without_changing_ids() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = PackStore::with_root(dir.path().join("packs"));
+        let created = store.create_pack(request("cedar-county")).expect("create");
+        assert_eq!(created.id, "cedar-county");
+        assert_eq!(created.name, "Cedar County training");
+        assert!(created.scenarios.is_empty());
+        assert!(store.create_pack(request("cedar-county")).is_err());
+
+        let updated = store
+            .update_pack(
+                "cedar-county",
+                PackUpdate {
+                    name: "Cedar County ECC training".to_string(),
+                    visibility: PackVisibility::Shareable,
+                    license: "CC-BY-4.0".to_string(),
+                    owner_agency: "Cedar County".to_string(),
+                    owner_contact: None,
+                },
+            )
+            .expect("update");
+        assert_eq!(updated.id, "cedar-county");
+        assert_eq!(updated.name, "Cedar County ECC training");
+        assert_eq!(updated.visibility, "shareable");
+        assert_eq!(updated.license, "CC-BY-4.0");
+    }
+
+    #[test]
+    fn rejects_unsafe_pack_ids_and_bad_profiles() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = PackStore::with_root(dir.path().join("packs"));
+        assert!(store.create_pack(request("../escape")).is_err());
+        let mut bad = request("valid-id");
+        bad.owner_agency.clear();
+        assert!(store.create_pack(bad).is_err());
     }
 }

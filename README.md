@@ -75,7 +75,9 @@ form edits that model, and the server validates then serializes it back.
 A pack is a local directory of agency-owned scenarios under the OS local-data
 directory. It is never committed to the repo and never uploaded by the app.
 `Save to pack` creates the default `local` pack on first use; the Prepare
-library lists saved scenarios and starts them by pack id. Approval binds to the
+library lists saved scenarios and starts them by pack id; New pack creates a
+named agency pack and Pack settings edits its display name, visibility, license,
+and owner. Author's Save to pack targets the selected pack. Approval binds to the
 scenario file hash; only approved scenarios start, while drafts can be opened
 and test-driven as unapproved. Reports carry the scenario hash, pack id/version,
 and approval. Export creates a checksummed zip; import inspects it first, then

@@ -10,6 +10,8 @@
   const metaEl = $("author-meta");
   const scenarioInput = $("scenario");
   const statusEl = $("status");
+  const authorPack = $("author-pack");
+  const authorPackPicker = $("author-pack-picker");
 
   let data = null;
   let validateTimer = null;
@@ -21,6 +23,14 @@
 
   function setOutput(text) {
     outputEl.textContent = text || "";
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(
+      /[&<>"']/g,
+      (character) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character])
+    );
   }
 
   async function api(path, options = {}) {
@@ -452,13 +462,39 @@
     URL.revokeObjectURL(url);
   }
 
+  async function loadAuthorPacks(preferred) {
+    try {
+      const data = await api("/api/packs");
+      const packs = data.packs || [];
+      const previous = authorPack.value;
+      authorPack.innerHTML = packs
+        .map(
+          (pack) =>
+            `<option value="${escapeHtml(pack.id)}">${escapeHtml(pack.name)}</option>`
+        )
+        .join("");
+      const wanted = preferred || previous || data.default_pack_id;
+      if (packs.some((pack) => pack.id === wanted)) {
+        authorPack.value = wanted;
+      }
+      authorPackPicker.hidden = packs.length === 0;
+    } catch (error) {
+      authorPackPicker.hidden = true;
+    }
+  }
+
   async function saveToPack() {
+
     if (!data) return;
     const yaml = await renderYaml();
     if (!yaml) return;
     setMeta("Saving to pack...");
     try {
-      const result = await api("/api/packs/scenarios", {
+      const selectedPack = authorPack.value;
+      const endpoint = selectedPack
+        ? `/api/packs/${encodeURIComponent(selectedPack)}/scenarios`
+        : "/api/packs/scenarios";
+      const result = await api(endpoint, {
         method: "POST",
         headers: { "Content-Type": "text/yaml" },
         body: yaml,
@@ -470,6 +506,7 @@
           `${result.scenario.facts} facts · ${result.scenario.rubric_items} rubric items · ` +
           `${result.scenario.critical_items} critical.`
       );
+      await loadAuthorPacks(result.pack_id);
       if (window.refreshLibrary) window.refreshLibrary();
     } catch (error) {
       setMeta("Save failed", "bad");
@@ -545,6 +582,10 @@
   $("author-save-pack").addEventListener("click", saveToPack);
   $("author-use").addEventListener("click", useInRunner);
   document.querySelectorAll(".tab").forEach((button) => {
-    button.addEventListener("click", () => switchTab(button.dataset.tab));
+    button.addEventListener("click", () => {
+      switchTab(button.dataset.tab);
+      if (button.dataset.tab === "author-tab") loadAuthorPacks();
+    });
   });
+  loadAuthorPacks();
 })();
