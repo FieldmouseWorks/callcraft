@@ -71,7 +71,7 @@ Then bulk ingestion: CSV for facts/rubric/geography, then a geography picker.
 - Pack settings/display-name edits; pack ids stay immutable.
 - Multi-pack Save target in Author; library pack switcher.
 - Empty and error pack states in the library.
-- PR pending.
+- PR #17.
 
 ### Approval and immutable content identity
 
