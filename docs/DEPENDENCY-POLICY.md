@@ -14,6 +14,9 @@ Latest stable, always. This is not a preference; it is the rule for this project
   - Low and routine version bumps: weekly.
 - Deprecated or archived crates are not added. If one becomes archived, it is
   replaced or the risk is documented in an issue immediately.
+- The workspace MSRV tracks the current stable Rust release (1.97 at the
+  time of writing). Raising the MSRV is preferred to shipping a dependency
+  with a known advisory.
 
 ## CI gates
 

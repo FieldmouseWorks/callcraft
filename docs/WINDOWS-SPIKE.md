@@ -4,6 +4,27 @@ Purpose: prove the desktop shell works on the pilot's target platform before
 voice work. This is a technical spike, not the pilot. Record what actually
 happens; a failed check with a clear error is a successful spike.
 
+## Linux smoke (WebKitGTK) — completed 2026-11-15
+
+Before Windows hardware was available, the desktop shell was smoke-tested on
+Linux under X11/WebKitGTK:
+
+- secure context: true
+- Tauri IPC: returned `Callcraft 0.1.0 (linux)`
+- microphone: granted (analog stereo input), media devices present
+
+Two real defects were found and fixed:
+
+1. App commands must be declared to `tauri-build` (`AppManifest::commands`) and
+   granted in the window capability (`allow-app-info`); otherwise remote-origin
+   IPC fails with "Plugin not found".
+2. WebKitGTK denies microphone requests by default. The shell now allows
+   `PermissionKind::Microphone` in `on_permission_request`; capture still only
+   starts on an explicit Record click.
+
+This is not a substitute for the Windows checklist. WebView2, SmartScreen,
+AppLocker/WDAC, and OS microphone policy still require a Windows machine.
+
 ## Exit criteria
 
 All of these must pass on a real Windows 10/11 machine:
@@ -11,9 +32,11 @@ All of these must pass on a real Windows 10/11 machine:
 1. The app launches, and its webview loads the loopback UI.
 2. Diagnostics reports a secure context.
 3. Tauri IPC returns the app version from the loopback page.
-4. The microphone permission prompt appears, and granting it yields a live
-   track (which is immediately stopped).
-5. Denying the microphone produces a clear, non-crashing error.
+4. The microphone check yields a live track (which is immediately stopped).
+   The shell allows microphone in its webview permission handler, so no
+   webview prompt is expected.
+5. Denying microphone at the OS level (Windows privacy settings) produces a
+   clear, non-crashing error.
 6. A session runs, scores, and downloads a report.
 7. The authoring form loads, validates, renders, and feeds the runner.
 8. No Windows firewall prompt appears.
@@ -51,9 +74,11 @@ SmartScreen or AppLocker friction. That is a result to record, not a bug.
    - origin (expect `http://127.0.0.1:<port>`)
    - secure context (expect `true`)
    - tauri ipc (expect `Callcraft 0.1.0 (windows)`)
-   - microphone (expect `granted — <device label> (live)` after allowing)
+   - microphone (expect `granted — <device label> (live)`; no webview prompt,
+     because the shell's handler allows it)
    - user agent (record the WebView2/Edge version)
-4. Restart the app, attempt the microphone check, and **deny** the prompt.
+4. Deny microphone at the OS level (Settings → Privacy & security →
+   Microphone), restart the app, and run the check again.
    Confirm the output is a named error, not a crash.
 5. Load the example, start a session, send five turns, record an event, finish,
    download the report, and open the JSON. Confirm evidence fields are set.
@@ -71,7 +96,7 @@ SmartScreen or AppLocker friction. That is a result to record, not a bug.
 | Secure context | true | | |
 | Tauri IPC | version string | | |
 | Mic allow | live track, stopped | | |
-| Mic deny | named error | | |
+| Mic deny (OS level) | named error | | |
 | Session score | PASS/FAIL rendered | | |
 | Report download | JSON file opens | | |
 | Author round-trip | title changes in session | | |
@@ -85,8 +110,9 @@ SmartScreen or AppLocker friction. That is a result to record, not a bug.
   allow-list a signed binary, or the pilot uses `callcraft serve` in a browser.
 - **WebView2 runtime missing.** Install the Evergreen runtime (per-machine
   install may need admin; per-user is an option). Record which was used.
-- **Microphone denied by Windows privacy settings.** The webview error may be
-  unhelpful; enable the OS setting and retest.
+- **Microphone denied by Windows privacy settings.** The shell allows at the
+  webview level, but OS policy still wins; the error may be unhelpful. Enable
+  the OS setting and retest.
 - **Tauri IPC denied from the loopback origin.** Check the `remote` capability
   in `crates/callcraft-app/capabilities/default.json` and record the exact error.
 - **Firewall prompt.** The server binds `127.0.0.1` only; a prompt means

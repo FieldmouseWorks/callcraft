@@ -3,12 +3,15 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# Unmaintained transitive dependency of Tauri's Linux GTK stack.
+# Tracked in https://github.com/FieldmouseWorks/callcraft/issues/2.
+ignore = ["RUSTSEC-2024-0370"]
 
 [licenses]
 version = 2
 allow = [
   "MIT",
+  "MIT-0",
   "Apache-2.0",
   "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause",
@@ -25,6 +28,7 @@ confidence-threshold = 0.9
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

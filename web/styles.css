@@ -226,6 +226,18 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.voice-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.caller-audio {
+  max-width: 100%;
+}
+
 .turn-row {
   display: flex;
   gap: 10px;
@@ -456,3 +468,11 @@ button.danger {
   .anchor-row { grid-template-columns: 1fr; }
 }
 
+
+.settings-heading {
+  margin: 24px 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}

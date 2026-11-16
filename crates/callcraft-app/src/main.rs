@@ -4,6 +4,8 @@
 //! at it. One API, one origin, one test surface. The webview never gets direct
 //! filesystem access; native dialogs are added through Tauri commands.
 
+use tauri::webview::{PermissionKind, PermissionResponse};
+
 /// Diagnostics endpoint for the Windows spike: proves that a page served from
 /// the loopback origin can reach Tauri IPC.
 #[tauri::command]
@@ -22,6 +24,10 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_permission_request(|_, kind| match kind {
+            PermissionKind::Microphone => PermissionResponse::Allow,
+            _ => PermissionResponse::Default,
+        })
         .invoke_handler(tauri::generate_handler![app_info])
         .setup(move |app| {
             tauri::WebviewWindowBuilder::new(

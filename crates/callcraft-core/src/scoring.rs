@@ -32,8 +32,9 @@ pub struct Evaluation {
     pub human_review_required: Vec<String>,
     pub overall: ItemStatus,
     /// Rejections of caller output that was not backed by the fact base.
-    /// Deterministic caller mode always reports zero; the LLM adapter must too.
     pub drift_rejections: u32,
+    /// Provider/response-shape failures that are not closed-world violations.
+    pub adapter_failures: u32,
 }
 
 pub fn evaluate(scenario: &Scenario, session: &Session) -> Evaluation {
@@ -91,6 +92,7 @@ pub fn evaluate(scenario: &Scenario, session: &Session) -> Evaluation {
         human_review_required,
         overall,
         drift_rejections: session.drift_rejections,
+        adapter_failures: session.adapter_failures,
     }
 }
 

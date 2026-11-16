@@ -66,6 +66,25 @@ impl CallerEngine {
         self.events.insert(name.to_string());
     }
 
+    /// Marks a fact as already disclosed so a later deterministic fallback does
+    /// not re-reveal it. Used after a validated LLM caller decision.
+    pub fn mark_disclosed(&mut self, fact_id: &str) {
+        if self.scenario.facts.iter().any(|fact| fact.id == fact_id) {
+            self.disclosed.insert(fact_id.to_string());
+        }
+    }
+
+    /// Facts already disclosed, for prompt context and repeat handling.
+    pub fn disclosed_fact_ids(&self) -> impl Iterator<Item = &str> {
+        self.disclosed.iter().map(String::as_str)
+    }
+
+    /// Marks the conversation as started so a later deterministic fallback does
+    /// not volunteer a fact mid-call after the LLM handled the opening.
+    pub fn mark_volunteered(&mut self) {
+        self.volunteered = true;
+    }
+
     pub fn respond(&mut self, trainee_text: &str, elapsed_s: f64) -> CallerTurn {
         let normalized = normalize(trainee_text);
 

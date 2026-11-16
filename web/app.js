@@ -8,6 +8,9 @@ const sessionPanel = $("session-panel");
 const transcriptEl = $("transcript");
 const eventBar = $("event-bar");
 const turnInput = $("turn-input");
+const recordButton = $("record");
+const voiceMeta = $("voice-meta");
+const callerAudio = $("caller-audio");
 const scorecard = $("scorecard");
 
 let sessionId = null;
@@ -15,6 +18,8 @@ let scenarioId = null;
 let recordedEvents = new Set();
 let report = null;
 let finished = false;
+let recorder = null;
+let chunks = [];
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -124,6 +129,9 @@ async function startSession() {
     $("finish").disabled = false;
     $("send").disabled = false;
     turnInput.disabled = false;
+    recordButton.disabled = true;
+    recordButton.textContent = "Record turn";
+    refreshVoiceStatus();
     $("session-title").textContent = data.scenario.title;
     sessionPanel.hidden = false;
 
@@ -162,6 +170,99 @@ async function sendTurn() {
   turnInput.focus();
 }
 
+async function refreshVoiceStatus() {
+  try {
+    const status = await api("/api/voice/status");
+    const callerMode = status.caller === "llm" ? " · LLM caller" : "";
+    if (status.stt) {
+      recordButton.disabled = finished;
+      voiceMeta.textContent = `Voice ready${callerMode}`;
+      voiceMeta.className = "meta ok";
+    } else {
+      recordButton.disabled = true;
+      voiceMeta.textContent = `Voice not configured — text only${callerMode}`;
+      voiceMeta.className = "meta";
+    }
+  } catch (error) {
+    recordButton.disabled = true;
+    voiceMeta.textContent = error.message;
+    voiceMeta.className = "meta bad";
+  }
+}
+
+async function toggleRecording() {
+  if (finished) return;
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    voiceMeta.textContent = "Recording is unavailable in this webview";
+    voiceMeta.className = "meta bad";
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) chunks.push(event.data);
+    };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((track) => track.stop());
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      await sendVoice(blob);
+    };
+    recorder.start();
+    recordButton.textContent = "Stop recording";
+    voiceMeta.textContent = "Recording...";
+    voiceMeta.className = "meta warn";
+  } catch (error) {
+    voiceMeta.textContent = `microphone: ${error.name}: ${error.message}`;
+    voiceMeta.className = "meta bad";
+  }
+}
+
+async function sendVoice(blob) {
+  recordButton.disabled = true;
+  voiceMeta.textContent = "Transcribing...";
+  voiceMeta.className = "meta";
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/voice-turn`, {
+      method: "POST",
+      headers: {
+        "Content-Type": blob.type || "audio/webm",
+        "X-Callcraft-Token": token,
+      },
+      body: blob,
+    });
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      data = { ok: false, error: `HTTP ${response.status}` };
+    }
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    bubble("trainee", data.transcript);
+    bubble("caller", data.caller);
+    if (data.audio_base64) {
+      callerAudio.hidden = false;
+      callerAudio.src = `data:${data.audio_mime || "audio/wav"};base64,${data.audio_base64}`;
+      callerAudio.play().catch(() => {});
+    }
+    voiceMeta.textContent = data.audio_error ? "Reply text only (TTS failed)" : "Voice ready";
+    voiceMeta.className = data.audio_error ? "meta warn" : "meta ok";
+  } catch (error) {
+    voiceMeta.textContent = error.message;
+    voiceMeta.className = "meta bad";
+  }
+  recordButton.textContent = "Record turn";
+  recordButton.disabled = finished;
+  recorder = null;
+}
+
 async function finishSession() {
   if (!sessionId || finished) return;
   setStatus("Scoring...");
@@ -169,8 +270,10 @@ async function finishSession() {
     const data = await api(`/api/sessions/${sessionId}/finish`, { method: "POST" });
     report = data.report;
     finished = true;
+    if (recorder && recorder.state === "recording") recorder.stop();
     $("finish").disabled = true;
     $("send").disabled = true;
+    $("record").disabled = true;
     turnInput.disabled = true;
     document.querySelectorAll(".chip").forEach((chip) => {
       chip.disabled = true;
@@ -242,6 +345,7 @@ function downloadReport() {
 $("load-example").addEventListener("click", loadExample);
 $("start").addEventListener("click", startSession);
 $("send").addEventListener("click", sendTurn);
+$("record").addEventListener("click", toggleRecording);
 $("finish").addEventListener("click", finishSession);
 $("download").addEventListener("click", downloadReport);
 
@@ -305,6 +409,8 @@ async function runDiagnostics() {
 }
 
 $("run-diagnostics").addEventListener("click", runDiagnostics);
+
+window.refreshVoiceStatus = refreshVoiceStatus;
 
 if (!token) {
   setStatus("Missing session token — open the URL printed by `callcraft serve`.", "bad");

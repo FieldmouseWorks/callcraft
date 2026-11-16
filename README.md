@@ -1,9 +1,11 @@
 # Callcraft
 
+[![ci](https://github.com/FieldmouseWorks/callcraft/actions/workflows/ci.yml/badge.svg)](https://github.com/FieldmouseWorks/callcraft/actions/workflows/ci.yml)
+
 A free, MIT-licensed alternative to closed 911 dispatcher training simulators.
 The product is the **open scenario and rubric format**; this repo is the
 reference implementation: a validator, a text-mode runner, and a checklist
-scorer. Voice and model adapters come later behind the same format.
+scorer. Voice and model adapters sit behind the same format and are configured locally.
 
 ## Why
 
@@ -56,6 +58,38 @@ a loaded file are preserved.
 
 Authoring round-trips through the core: YAML parses into the typed model, the
 form edits that model, and the server validates then serializes it back.
+
+## Voice
+
+Voice is I/O around the same deterministic caller. STT and TTS each have a
+provider registry: OpenAI-compatible endpoints, OpenAI, whisper.cpp, ElevenLabs,
+Deepgram, and Piper via an OpenAI-compatible shim. The Settings tab configures
+and tests each direction; unset means text-only.
+
+```bash
+CALLCRAFT_STT_URL=http://127.0.0.1:8080 \
+CALLCRAFT_TTS_URL=http://127.0.0.1:8081 \
+CALLCRAFT_CALLER_URL=http://127.0.0.1:8082 \
+cargo run -p callcraft-cli -- serve
+```
+
+Contracts, provider notes, and privacy rules:
+[docs/VOICE-ADAPTERS.md](docs/VOICE-ADAPTERS.md) and
+[docs/SPEECH-PROVIDERS.md](docs/SPEECH-PROVIDERS.md). The LLM caller selects
+authored fact ids only; the server renders the words:
+[docs/LLM-CALLER.md](docs/LLM-CALLER.md).
+
+## Provider settings
+
+The **Settings** tab configures the caller LLM against a provider registry:
+OpenAI API, Anthropic API, any OpenAI-compatible endpoint, Ollama, llama.cpp,
+LM Studio, vLLM, and OpenRouter. A test connection runs one real caller
+decision and reports model, latency, chosen facts, and rendered speech.
+
+API keys live in the OS keychain; non-secret settings live in a local config
+file. Anthropic consumer subscription OAuth is not available to third-party
+apps, and OpenAI's Sign in with ChatGPT plan usage is partner-gated. Details:
+[docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Windows spike
 
@@ -113,10 +147,11 @@ PILOT-30-DAY.md    pilot plan and success criteria
 
 ## Status
 
-v0.1 — text mode, deterministic caller, checklist scoring, JSON reports,
-byte-identical replay, session API, runner UI, structured authoring UI, and a
-Tauri shell scaffold. Not built yet: voice adapter, LLM caller adapter, native
-file dialog, auth beyond the per-launch token. The 30-day pilot criteria in
+v0.1 — text and voice turns, deterministic caller with optional LLM
+decisioning, caller and speech provider registries with keychain-backed
+settings, checklist scoring, JSON reports, byte-identical replay, session API,
+runner UI, structured authoring UI, and a Tauri shell scaffold. Not built yet:
+native file dialog, auth beyond the per-launch token. The 30-day pilot criteria in
 [PILOT-30-DAY.md](PILOT-30-DAY.md) decide whether any of that gets built.
 
 Dependency and release rules: [docs/DEPENDENCY-POLICY.md](docs/DEPENDENCY-POLICY.md).
