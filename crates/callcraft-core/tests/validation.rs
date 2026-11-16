@@ -32,6 +32,8 @@ fn invalid_fixtures_are_rejected() {
         "fixtures/invalid/missing-rubric.yaml",
         "fixtures/invalid/duplicate-fact-ids.yaml",
         "fixtures/invalid/unknown-utterance-fact.yaml",
+        "fixtures/invalid/yaml-deep-nesting.yaml",
+        "fixtures/invalid/yaml-alias-bomb.yaml",
     ] {
         let text = read(relative);
         assert!(

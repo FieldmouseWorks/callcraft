@@ -76,12 +76,13 @@ fn replay_produces_byte_identical_report() {
     let log = to_jsonl(&session, &scenario);
 
     let first_eval = scoring::evaluate(&scenario, &session);
-    let first_report = report::build(&scenario, &session, first_eval, &log);
+    let context = report::RunContext::direct("test-scenario-sha");
+    let first_report = report::build(&scenario, &session, first_eval, &log, &context);
     let first_json = report::to_json(&first_report);
 
     let replayed = replay(&log).expect("log replays");
     let second_eval = scoring::evaluate(&scenario, &replayed);
-    let second_report = report::build(&scenario, &replayed, second_eval, &log);
+    let second_report = report::build(&scenario, &replayed, second_eval, &log, &context);
     let second_json = report::to_json(&second_report);
 
     assert_eq!(first_json, second_json);

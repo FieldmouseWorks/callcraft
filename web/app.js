@@ -21,6 +21,7 @@ const briefDuration = $("brief-duration");
 const briefVoice = $("brief-voice");
 const briefCounts = $("brief-counts");
 const sessionScenario = $("session-scenario");
+const sessionApproval = $("session-approval");
 
 let sessionId = null;
 let scenarioId = null;
@@ -238,47 +239,53 @@ async function startSession() {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
       body: scenarioInput.value,
     });
-
-    sessionId = data.session_id;
-    scenarioId = data.scenario.id;
-    recordedEvents = new Set();
-    report = null;
-    finished = false;
-    sessionStartedAt = Date.now();
-    document.body.classList.add("session-live");
-    document.body.classList.remove("session-review");
-
-    transcriptEl.replaceChildren();
-    scorecard.hidden = true;
-    scorecard.innerHTML = "";
-    $("download").disabled = true;
-    $("finish").disabled = false;
-    $("send").disabled = false;
-    turnInput.disabled = false;
-    recordButton.disabled = true;
-    recordButton.textContent = "Record turn";
-    refreshVoiceStatus();
-    $("session-title").textContent = data.scenario.title;
-    $("session-stage-label").textContent = "Run / Live call";
-    sessionScenario.innerHTML = `
-      <strong>${escapeHtml(data.scenario.title)}</strong>
-      <p class="meta mono">${escapeHtml(data.scenario.id)}</p>
-      <p>${escapeHtml(data.scenario.disclaimer)}</p>
-    `;
-    sessionPanel.hidden = false;
-
-    renderEvents(data.events || []);
-    bubble("system", data.scenario.disclaimer, "00:00");
-    for (const warning of data.warnings || []) bubble("system", `warning: ${warning}`, "00:00");
-
-    setStatus("Session running", "ok");
-    setSessionStatus("In progress");
-    turnInput.focus();
+    beginSession(data);
   } catch (error) {
     $("start").disabled = !scenarioInput.value.trim();
     setStatus(error.message, "bad");
     scenarioOutput.textContent = error.message;
   }
+}
+
+function beginSession(data) {
+  sessionId = data.session_id;
+  scenarioId = data.scenario.id;
+  recordedEvents = new Set();
+  report = null;
+  finished = false;
+  sessionStartedAt = Date.now();
+  document.body.classList.add("session-live");
+  document.body.classList.remove("session-review");
+
+  transcriptEl.replaceChildren();
+  scorecard.hidden = true;
+  scorecard.innerHTML = "";
+  $("download").disabled = true;
+  $("finish").disabled = false;
+  $("send").disabled = false;
+  turnInput.disabled = false;
+  recordButton.disabled = true;
+  recordButton.textContent = "Record turn";
+  refreshVoiceStatus();
+  $("session-title").textContent = data.scenario.title;
+  $("session-stage-label").textContent = "Run / Live call";
+  const approval = data.approval || "none";
+  sessionApproval.textContent = approval === "none" ? "UNAPPROVED" : approval.toUpperCase();
+  sessionApproval.className = `approval-tag ${approval === "approved" ? "approved" : "unapproved"}`;
+  sessionScenario.innerHTML = `
+    <strong>${escapeHtml(data.scenario.title)}</strong>
+    <p class="meta mono">${escapeHtml(data.scenario.id)}</p>
+    <p>${escapeHtml(data.scenario.disclaimer)}</p>
+  `;
+  sessionPanel.hidden = false;
+
+  renderEvents(data.events || []);
+  bubble("system", data.scenario.disclaimer, "00:00");
+  for (const warning of data.warnings || []) bubble("system", `warning: ${warning}`, "00:00");
+
+  setStatus("Session running", "ok");
+  setSessionStatus("In progress");
+  turnInput.focus();
 }
 
 async function sendTurn() {
@@ -471,6 +478,8 @@ function renderScorecard(data) {
     `cost $${Number(data.cost?.total_usd || 0).toFixed(2)}`,
     `drift ${evaluation.drift_rejections}`,
     `adapter faults ${evaluation.adapter_failures || 0}`,
+    `approval ${data.approval || "none"}`,
+    `scenario ${String(data.scenario_sha256 || "").slice(0, 12)}`,
     latency ? `p50 ${latency} ms` : null,
   ]
     .filter(Boolean)
@@ -619,7 +628,9 @@ $("run-diagnostics").addEventListener("click", runDiagnostics);
 window.refreshVoiceStatus = refreshVoiceStatus;
 
 updateBrief();
-if (token) refreshVoiceStatus();
+if (token) {
+  refreshVoiceStatus();
+}
 
 if (!token) {
   setStatus("Missing session token — open the URL printed by `callcraft serve`.", "bad");

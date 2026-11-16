@@ -878,6 +878,8 @@ body.session-review .scorecard { margin-top: 0; }
   .turn-row { flex-direction: column; }
   .turn-row button { width: 100%; }
   .scorecard { overflow-x: auto; }
+  .scenario-library { grid-template-columns: 1fr; }
+  .library-tools { justify-content: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

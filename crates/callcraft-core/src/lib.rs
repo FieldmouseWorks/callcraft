@@ -6,6 +6,7 @@
 
 pub mod caller;
 pub mod eventlog;
+pub mod pack;
 pub mod report;
 pub mod scenario;
 pub mod scoring;
@@ -14,6 +15,7 @@ pub mod validate;
 
 pub use caller::{CallerEngine, CallerTurn};
 pub use eventlog::{replay, to_jsonl};
+pub use pack::{PackManifest, safe_id};
 pub use report::Report;
 pub use scenario::{FORMAT_ID, FORMAT_VERSION, Scenario};
 pub use scoring::{Evaluation, ItemResult, ItemStatus, evaluate};

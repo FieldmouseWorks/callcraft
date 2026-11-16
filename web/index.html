@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0d1110">
   <title>Callcraft — Dispatcher Training Console</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/library.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -49,6 +50,29 @@
             </div>
             <span id="scenario-meta" class="meta"></span>
           </header>
+
+          <section class="sheet library-sheet" aria-labelledby="library-heading">
+            <div class="sheet-head">
+              <div>
+                <p class="sheet-label">Library</p>
+                <h3 id="library-heading">Saved scenarios</h3>
+              </div>
+              <div class="library-tools">
+                <label class="field pack-picker" id="pack-picker" hidden>
+                  <span class="field-label">Pack</span>
+                  <select id="library-pack" class="input"></select>
+                </label>
+                <button id="library-new-pack" class="secondary" type="button">New pack</button>
+                <button id="library-pack-settings" class="secondary" type="button" disabled>Pack settings</button>
+                <button id="library-export" class="secondary" type="button">Export pack</button>
+                <label class="file-input" id="import-pack-label">Import pack<input id="library-import" type="file" accept=".zip,application/zip"></label>
+                <button id="library-rollback" class="secondary" type="button" hidden>Undo import</button>
+                <span id="library-meta" class="meta"></span>
+              </div>
+            </div>
+            <div id="scenario-library" class="scenario-library" aria-live="polite"></div>
+            <div id="import-review" class="import-review" aria-live="polite" hidden></div>
+          </section>
 
           <div class="brief-layout">
             <section class="sheet source-sheet">
@@ -121,7 +145,12 @@
                 <button id="author-example" class="secondary" type="button">Load example</button>
                 <button id="author-validate" class="secondary" type="button">Validate</button>
                 <button id="author-render" class="secondary" type="button">Render &amp; download</button>
-                <button id="author-use" class="primary" type="button">Use in runner</button>
+                <label class="field author-pack-picker" id="author-pack-picker" hidden>
+                  <span class="field-label">Save to</span>
+                  <select id="author-pack" class="input"></select>
+                </label>
+                <button id="author-save-pack" class="primary" type="button">Save to pack</button>
+                <button id="author-use" class="secondary" type="button">Use in runner</button>
               </div>
               <div id="author-form" class="author-form"></div>
             </div>
@@ -288,6 +317,7 @@
           </div>
           <div class="session-bar-right">
             <span id="session-meta" class="meta" role="status" aria-live="polite">In progress</span>
+            <span id="session-approval" class="approval-tag">—</span>
             <span class="practice-tag">Practice</span>
           </div>
         </header>
@@ -341,7 +371,57 @@
     </main>
   </div>
 
+  <div id="pack-dialog" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pack-dialog-title">
+      <form id="pack-form">
+        <div class="sheet-head">
+          <div>
+            <p class="sheet-label">Pack</p>
+            <h3 id="pack-dialog-title">New pack</h3>
+          </div>
+          <button id="pack-close" class="ghost" type="button">Close</button>
+        </div>
+        <div class="grid">
+          <label class="field">
+            <span class="field-label">Pack ID</span>
+            <input id="pack-id" class="input" type="text" placeholder="cedar-county" autocomplete="off">
+          </label>
+          <label class="field">
+            <span class="field-label">Display name</span>
+            <input id="pack-name" class="input" type="text" placeholder="Cedar County training">
+          </label>
+          <label class="field">
+            <span class="field-label">Visibility</span>
+            <select id="pack-visibility" class="input">
+              <option value="private">Private</option>
+              <option value="shareable">Shareable</option>
+              <option value="public">Public</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">License</span>
+            <input id="pack-license" class="input" type="text" value="proprietary">
+          </label>
+          <label class="field">
+            <span class="field-label">Owner agency</span>
+            <input id="pack-owner" class="input" type="text" placeholder="Agency name">
+          </label>
+          <label class="field">
+            <span class="field-label">Owner contact (optional)</span>
+            <input id="pack-contact" class="input" type="text" placeholder="Training division">
+          </label>
+        </div>
+        <p id="pack-error" class="import-errors" hidden></p>
+        <div class="row">
+          <button id="pack-submit" class="primary" type="submit">Create pack</button>
+          <button id="pack-cancel" class="secondary" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
+  <script src="/library.js"></script>
   <script src="/author.js"></script>
   <script src="/settings.js"></script>
 </body>

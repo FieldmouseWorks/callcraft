@@ -7,6 +7,7 @@
 mod auth;
 mod caller_llm;
 mod handlers;
+pub mod packs;
 pub mod providers;
 pub mod speech;
 mod util;
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 
 use callcraft_core::CallerEngine;
 use callcraft_core::scenario::Scenario;
@@ -34,6 +35,7 @@ struct AppState {
     speech: Arc<Mutex<speech::SpeechConfig>>,
     caller: Arc<Mutex<CallerConfig>>,
     settings: providers::SettingsStore,
+    packs: packs::PackStore,
     http: reqwest::Client,
 }
 
@@ -46,6 +48,7 @@ struct StoredSession {
     caller_failures: u32,
     caller_disabled: bool,
     turn_lock: Arc<tokio::sync::Mutex<()>>,
+    run_context: callcraft_core::report::RunContext,
 }
 
 /// Start the loopback server on a background thread.
@@ -93,6 +96,26 @@ pub fn start_with_adapters_and_store(
     caller: CallerConfig,
     settings: providers::SettingsStore,
 ) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
+    start_with_adapters_store_and_packs(
+        port,
+        token,
+        speech,
+        caller,
+        settings,
+        packs::PackStore::from_env(),
+    )
+}
+
+/// Start with explicit adapters, settings storage, and pack storage. Tests use
+/// this to keep agency packs out of the real user data directory.
+pub fn start_with_adapters_store_and_packs(
+    port: u16,
+    token: String,
+    speech: speech::SpeechConfig,
+    caller: CallerConfig,
+    settings: providers::SettingsStore,
+    packs: packs::PackStore,
+) -> anyhow::Result<(u16, std::thread::JoinHandle<()>)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))?;
     listener.set_nonblocking(true)?;
     let actual_port = listener.local_addr()?.port();
@@ -106,6 +129,7 @@ pub fn start_with_adapters_and_store(
         speech: Arc::new(Mutex::new(speech)),
         caller: Arc::new(Mutex::new(caller)),
         settings,
+        packs,
         http,
     };
 
@@ -127,6 +151,8 @@ fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(handlers::static_files::index))
         .route("/app.js", get(handlers::static_files::app_js))
+        .route("/library.js", get(handlers::static_files::library_js))
+        .route("/library.css", get(handlers::static_files::library_css))
         .route("/author.js", get(handlers::static_files::author_js))
         .route("/settings.js", get(handlers::static_files::settings_js))
         .route("/styles.css", get(handlers::static_files::styles))
@@ -168,6 +194,44 @@ fn app(state: AppState) -> Router {
         .route(
             "/api/scenario/render",
             post(handlers::scenario::render_scenario),
+        )
+        .route(
+            "/api/packs",
+            get(handlers::packs::list_packs).post(handlers::packs::create_pack),
+        )
+        .route("/api/packs/{pack_id}", patch(handlers::packs::update_pack))
+        .route(
+            "/api/packs/scenarios",
+            post(handlers::packs::save_default_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios",
+            post(handlers::packs::save_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios/{scenario_id}",
+            get(handlers::packs::open_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios/{scenario_id}/approve",
+            post(handlers::packs::approve_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/scenarios/{scenario_id}/retire",
+            post(handlers::packs::retire_scenario),
+        )
+        .route(
+            "/api/packs/{pack_id}/export",
+            post(handlers::packs::export_pack),
+        )
+        .route(
+            "/api/packs/import/inspect",
+            post(handlers::packs::inspect_import),
+        )
+        .route("/api/packs/import", post(handlers::packs::import_pack))
+        .route(
+            "/api/packs/{pack_id}/rollback",
+            post(handlers::packs::rollback_pack),
         )
         .route("/api/sessions", post(handlers::sessions::create_session))
         .route(

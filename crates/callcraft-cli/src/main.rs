@@ -50,6 +50,17 @@ enum Command {
         #[arg(long, default_value_t = 17817)]
         port: u16,
     },
+    /// Inspect and validate agency packs.
+    Pack {
+        #[command(subcommand)]
+        command: PackCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackCommand {
+    /// Validate a pack directory without installing it.
+    Validate { path: PathBuf },
 }
 
 fn main() {
@@ -70,7 +81,34 @@ fn run() -> Result<()> {
             out,
         } => sim(&path, script.as_deref(), interactive, out.as_deref()),
         Command::Serve { port } => serve(port),
+        Command::Pack { command } => match command {
+            PackCommand::Validate { path } => validate_pack(&path),
+        },
     }
+}
+
+fn validate_pack(path: &Path) -> Result<()> {
+    let pack = callcraft_server::packs::validate_pack_dir(path).map_err(|error| anyhow!(error))?;
+    println!(
+        "OK: {} ({}) — {} scenarios",
+        pack.name,
+        pack.id,
+        pack.scenarios.len()
+    );
+    for scenario in &pack.scenarios {
+        println!(
+            "  {} — {} ({} facts, {} rubric items, {} critical)",
+            scenario.id,
+            scenario.title,
+            scenario.facts,
+            scenario.rubric_items,
+            scenario.critical_items
+        );
+        for warning in &scenario.warnings {
+            eprintln!("  warning {}: {warning}", scenario.id);
+        }
+    }
+    Ok(())
 }
 
 fn read(path: &Path) -> Result<String> {
@@ -165,7 +203,9 @@ fn sim(
     print_summary(scenario, &session, &evaluation);
 
     let log = callcraft_core::to_jsonl(&session, scenario);
-    let built = report::build(scenario, &session, evaluation, &log);
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let context = report::RunContext::direct(callcraft_core::pack::sha256_hex(&bytes));
+    let built = report::build(scenario, &session, evaluation, &log, &context);
 
     if let Some(out) = out {
         std::fs::write(out, format!("{}\n", report::to_json(&built)))
