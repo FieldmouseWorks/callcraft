@@ -19,14 +19,25 @@ default.
 
 ## Now
 
-### Review evidence and library discovery — next
+### Pilot instrument — next
 
-- [ ] Event evidence timestamps so a rubric event can anchor to the log.
-- [ ] A hideable observer margin for live runs.
-- [ ] Library search, tags, and status filters.
-- [ ] A library test pass for switching, empty/error packs, and target selection.
+The advisor review on 2026-11-16 moved this ahead of library discovery and
+further content features. The pilot gate is unproven; instrument it before
+building more.
 
-Then bulk ingestion: CSV for facts/rubric/geography, then a geography picker.
+- [ ] Human override capture for checklist items, stored with the report.
+- [ ] Blind human grading mode and machine-vs-human agreement calculation.
+- [ ] Real provider cost accounting instead of hardcoded `$0.00`.
+- [ ] Live stage-latency measurement in reports.
+- [ ] Persisted local session records with a trainee label or pseudonym.
+- [ ] Event evidence timestamps and a hideable observer margin, so event items
+  are not self-attested on the trainee screen.
+- [ ] A trainer-safe phrase-list anchor editor; raw regex moves to an advanced
+  path.
+- [ ] Authoring stopwatch notes in the pilot log.
+
+Explicitly not now: more pack features, provider/OAuth expansion, SOP
+extraction, library search/tags, CSV, geography picker, or client polish.
 
 ## Shipped
 
@@ -143,6 +154,8 @@ becomes a product. All must hold:
 | 2026-11-15 | `sources/` never exports; vendor protocol text is not ingested | [PACKS.md](PACKS.md) |
 | 2026-11-15 | Reports identify exact scenario bytes, pack version, and approval | [SPEC-scenario-format.md](../SPEC-scenario-format.md) |
 | 2026-11-15 | Untrusted YAML parses under explicit event, depth, alias, and size budgets | `validate.rs` |
+| 2026-11-16 | Pilot instrument before more content features; approvals and packs stop here for now | Advisor review |
+| 2026-11-16 | Review stack collapsed to foundation, client, and packs branches | PRs #21–#23 |
 
 ## Keeping this current
 
