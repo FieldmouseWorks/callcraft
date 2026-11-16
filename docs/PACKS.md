@@ -1,6 +1,6 @@
 # Agency packs
 
-Status: slices 1–4 implemented (PRs #13, #15, #16, #17). Local storage, pack
+Status: slices 1–4 implemented (consolidated PR #23; formerly #13, #15, #16, #17). Local storage, pack
 creation/profile edits, multi-pack Save targets, library browse/start,
 hash-bound approvals, approved-only starts, report stamping,
 `callcraft pack validate`, checksummed export/import with dry-run review,

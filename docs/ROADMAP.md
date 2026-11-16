@@ -64,7 +64,7 @@ extraction, library search/tags, CSV, geography picker, or client polish.
   origin-bound keys, env key binding, fail-closed provider ids.
 - Split drift vs adapter failures, per-session turn serialization, stage
   budgets, typed STT/TTS APIs, unified config builders.
-- PR #11; issue #10.
+- Consolidated PR #21; issue #10.
 
 ### Client: Logbook
 
@@ -73,7 +73,7 @@ extraction, library search/tags, CSV, geography picker, or client polish.
 - Paper-light default with a dim token set, ruled transcript, observer marks,
   evidence links, responsive 1280/800 layouts, accessibility repairs.
 - Design record: [DESIGN.md](DESIGN.md).
-- PR #12.
+- Consolidated PR #22.
 
 ### Pack management and agency profile
 
@@ -82,7 +82,7 @@ extraction, library search/tags, CSV, geography picker, or client polish.
 - Pack settings/display-name edits; pack ids stay immutable.
 - Multi-pack Save target in Author; library pack switcher.
 - Empty and error pack states in the library.
-- PR #17.
+
 
 ### Approval and immutable content identity
 
@@ -95,17 +95,17 @@ extraction, library search/tags, CSV, geography picker, or client polish.
   accepted.
 - Explicit YAML parser budgets plus alias-amplification and deep-nesting
   fixtures.
-- PR #16; issue #14.
+- Consolidated PR #23; issue #14.
 
 ### Agency packs
 
 - `callcraft-pack/v0.1` manifest, OS-local store, Save to pack, scenario
   library, pack-scoped start, `callcraft pack validate`.
-- PR #13; [PACKS.md](PACKS.md).
+- Consolidated PR #23; [PACKS.md](PACKS.md).
 - Checksummed zip export, two-step import review, install/replace, backup and
   rollback, zip-safety caps.
-- PR #15.
-- Approval ledger, approved-only starts, report stamping, and bounded YAML: PR #16.
+
+- Approval ledger, approved-only starts, report stamping, and bounded YAML: consolidated PR #23.
 
 ## Next
 
