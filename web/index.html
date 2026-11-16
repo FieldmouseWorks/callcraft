@@ -3,187 +3,343 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Callcraft</title>
+  <meta name="theme-color" content="#0d1110">
+  <title>Callcraft — Dispatcher Training Console</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header>
-    <div>
-      <h1>Callcraft</h1>
-      <p class="sub">Open 911 dispatcher training — author scenarios, run calls, score them. Practice aid, not a certification.</p>
-    </div>
-    <span id="status" class="status">Ready</span>
-  </header>
+  <a class="skip-link" href="#main">Skip to content</a>
 
-  <main class="layout">
-    <section class="panel">
-      <div class="tabs" role="tablist">
-        <button class="tab active" data-tab="scenario-tab" type="button" role="tab">Scenario</button>
-        <button class="tab" data-tab="author-tab" type="button" role="tab">Author</button>
-        <button class="tab" data-tab="settings-tab" type="button" role="tab">Settings</button>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div class="brand-text">
+          <h1>Callcraft</h1>
+          <p>Dispatcher training console</p>
+        </div>
       </div>
 
-      <div id="scenario-tab" class="tab-panel">
-        <div class="panel-head">
-          <h2>Scenario file</h2>
-          <span id="scenario-meta" class="meta"></span>
-        </div>
-        <div class="row">
-          <label class="file-input">Load YAML<input id="file" type="file" accept=".yaml,.yml"></label>
-          <button id="load-example" class="secondary" type="button">Load example</button>
-          <button id="start" class="primary" type="button">Start session</button>
-        </div>
-        <textarea id="scenario" spellcheck="false" placeholder="Paste a scenario file here..."></textarea>
-        <pre id="scenario-output" class="output" aria-live="polite"></pre>
+      <nav class="mode-tabs" role="tablist" aria-label="Workspace modes">
+        <button class="tab mode-tab active" id="tab-scenario" data-tab="scenario-tab" type="button" role="tab" aria-selected="true" aria-controls="scenario-tab">
+          <span class="tab-index">01</span>Prepare
+        </button>
+        <button class="tab mode-tab" id="tab-author" data-tab="author-tab" type="button" role="tab" aria-selected="false" aria-controls="author-tab">
+          <span class="tab-index">02</span>Author
+        </button>
+        <button class="tab mode-tab" id="tab-settings" data-tab="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settings-tab">
+          <span class="tab-index">03</span>Settings
+        </button>
+      </nav>
+
+      <div class="topbar-status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status" class="status" role="status" aria-live="polite">Ready</span>
+      </div>
+    </header>
+
+    <main id="main" class="workspace">
+      <div id="prep-workspace" class="prep-workspace">
+        <section id="scenario-tab" class="tab-panel mode-panel" role="tabpanel" aria-labelledby="tab-scenario">
+          <header class="page-head">
+            <div>
+              <p class="eyebrow">Prepare / Scenario brief</p>
+              <h2>Set the call</h2>
+              <p class="lede">Load a scenario, check the run sheet, then start the session. The trainee talks; the caller stays inside the authored fact base.</p>
+            </div>
+            <span id="scenario-meta" class="meta"></span>
+          </header>
+
+          <div class="brief-layout">
+            <section class="sheet source-sheet">
+              <div class="sheet-head">
+                <div>
+                  <p class="sheet-label">Source</p>
+                  <h3>Scenario file</h3>
+                </div>
+                <span class="meta mono">YAML · callcraft-scenario/v0.1</span>
+              </div>
+              <div class="toolbar">
+                <label class="file-input">Load YAML<input id="file" type="file" accept=".yaml,.yml"></label>
+                <button id="load-example" class="secondary" type="button">Load example</button>
+                <span class="meta">No agency content in public examples.</span>
+              </div>
+              <textarea id="scenario" spellcheck="false" placeholder="Paste a scenario file here..."></textarea>
+              <pre id="scenario-output" class="output" aria-live="polite"></pre>
+            </section>
+
+            <aside class="brief-rail">
+              <section class="sheet run-sheet">
+                <p class="sheet-label">Run sheet</p>
+                <div id="scenario-brief" class="run-brief">
+                  <strong id="brief-title">No scenario loaded</strong>
+                  <p id="brief-subtitle">Load a file or the example to see the brief.</p>
+                  <p id="brief-counts" class="meta"></p>
+                  <dl class="brief-facts">
+                    <div><dt>Scenario</dt><dd id="brief-id">—</dd></div>
+                    <div><dt>Incident</dt><dd id="brief-incident">—</dd></div>
+                    <div><dt>Difficulty</dt><dd id="brief-difficulty">—</dd></div>
+                    <div><dt>Duration</dt><dd id="brief-duration">—</dd></div>
+                  </dl>
+                </div>
+                <button id="start" class="primary wide" type="button" disabled>Start session</button>
+                <p class="meta">Scoring is checklist-based. The tool is a practice aid, not a certification.</p>
+              </section>
+
+              <section class="sheet">
+                <p class="sheet-label">Before you start</p>
+                <ol class="step-list">
+                  <li><span>01</span>Load a scenario or paste YAML.</li>
+                  <li><span>02</span>Confirm the caller and voice state in Settings if needed.</li>
+                  <li><span>03</span>Start the session, then respond as the trainee.</li>
+                  <li><span>04</span>Record events, finish, and review the debrief.</li>
+                </ol>
+              </section>
+
+              <section class="sheet quiet-sheet">
+                <p class="sheet-label">Voice</p>
+                <p id="brief-voice" class="meta">Checking voice configuration...</p>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section id="author-tab" class="tab-panel mode-panel" role="tabpanel" aria-labelledby="tab-author" hidden>
+          <header class="page-head">
+            <div>
+              <p class="eyebrow">Step 02 / Author</p>
+              <h2>Write the scenario</h2>
+              <p class="lede">Edit against the same schema the runner enforces. Validation runs as you type; rendering stays blocked while the scenario is invalid.</p>
+            </div>
+            <span id="author-meta" class="meta"></span>
+          </header>
+
+          <div class="author-layout">
+            <div class="author-main">
+              <div class="toolbar author-toolbar">
+                <label class="file-input">Load YAML<input id="author-file" type="file" accept=".yaml,.yml"></label>
+                <button id="author-example" class="secondary" type="button">Load example</button>
+                <button id="author-validate" class="secondary" type="button">Validate</button>
+                <button id="author-render" class="secondary" type="button">Render &amp; download</button>
+                <button id="author-use" class="primary" type="button">Use in runner</button>
+              </div>
+              <div id="author-form" class="author-form"></div>
+            </div>
+
+            <aside class="author-rail">
+              <section class="sheet validation-sheet">
+                <div class="sheet-head">
+                  <div>
+                    <p class="sheet-label">Checks</p>
+                    <h3>Validation</h3>
+                  </div>
+                  <span class="meta">Debounced</span>
+                </div>
+                <pre id="author-output" class="output" aria-live="polite"></pre>
+              </section>
+            </aside>
+          </div>
+        </section>
+
+        <section id="settings-tab" class="tab-panel mode-panel" role="tabpanel" aria-labelledby="tab-settings" hidden>
+          <header class="page-head">
+            <div>
+              <p class="eyebrow">Step 03 / Settings</p>
+              <h2>Connect providers</h2>
+              <p class="lede">Text only is always available. Voice and model providers are optional and stay on this machine except for the calls you explicitly configure.</p>
+            </div>
+            <span class="meta">API keys live in the OS keychain.</span>
+          </header>
+
+          <div class="settings-layout">
+            <section class="sheet provider-card caller-card">
+              <div class="sheet-head">
+                <div>
+                  <p class="sheet-label">Caller</p>
+                  <h3>Decision model</h3>
+                </div>
+                <span id="provider-status" class="meta"></span>
+              </div>
+              <div class="grid">
+                <label class="field">
+                  <span class="field-label">Provider</span>
+                  <select id="provider-select" class="input"></select>
+                </label>
+                <label class="field">
+                  <span class="field-label">Base URL</span>
+                  <input id="provider-url" class="input" type="text" placeholder="https://...">
+                </label>
+                <label class="field">
+                  <span class="field-label">Model</span>
+                  <input id="provider-model" class="input" type="text" placeholder="model name">
+                </label>
+                <label class="field">
+                  <span class="field-label">API key</span>
+                  <input id="provider-key" class="input" type="password" placeholder="stored in OS keychain; blank keeps existing">
+                </label>
+              </div>
+              <p id="provider-note" class="meta"></p>
+              <div class="row">
+                <button id="provider-test" class="secondary" type="button">Test connection</button>
+                <button id="provider-save" class="primary" type="button">Save</button>
+                <button id="provider-reset" class="secondary" type="button">Use deterministic caller</button>
+              </div>
+              <pre id="provider-output" class="output" aria-live="polite"></pre>
+              <p class="meta">Anthropic consumer subscription OAuth is not available to third-party apps; use an API key. OpenAI Sign in with ChatGPT plan usage is partner-gated.</p>
+            </section>
+
+            <section class="sheet provider-card">
+              <div class="sheet-head">
+                <div>
+                  <p class="sheet-label">Input</p>
+                  <h3>Speech-to-text</h3>
+                </div>
+                <span id="stt-status" class="meta"></span>
+              </div>
+              <div class="grid">
+                <label class="field">
+                  <span class="field-label">Provider</span>
+                  <select id="stt-provider" class="input"></select>
+                </label>
+                <label class="field">
+                  <span class="field-label">Base URL</span>
+                  <input id="stt-url" class="input" type="text" placeholder="https://...">
+                </label>
+                <label class="field">
+                  <span class="field-label">Model</span>
+                  <input id="stt-model" class="input" type="text" placeholder="whisper-1">
+                </label>
+                <label class="field">
+                  <span class="field-label">Language</span>
+                  <input id="stt-language" class="input" type="text" placeholder="en">
+                </label>
+                <label class="field">
+                  <span class="field-label">API key</span>
+                  <input id="stt-key" class="input" type="password" placeholder="stored in OS keychain">
+                </label>
+              </div>
+              <p id="stt-note" class="meta"></p>
+              <div class="row">
+                <button id="stt-test" class="secondary" type="button">Test transcription</button>
+                <button id="stt-save" class="primary" type="button">Save STT</button>
+                <button id="stt-reset" class="secondary" type="button">Clear STT</button>
+              </div>
+              <pre id="stt-output" class="output" aria-live="polite"></pre>
+            </section>
+
+            <section class="sheet provider-card">
+              <div class="sheet-head">
+                <div>
+                  <p class="sheet-label">Output</p>
+                  <h3>Text-to-speech</h3>
+                </div>
+                <span id="tts-status" class="meta"></span>
+              </div>
+              <div class="grid">
+                <label class="field">
+                  <span class="field-label">Provider</span>
+                  <select id="tts-provider" class="input"></select>
+                </label>
+                <label class="field">
+                  <span class="field-label">Base URL</span>
+                  <input id="tts-url" class="input" type="text" placeholder="https://...">
+                </label>
+                <label class="field">
+                  <span class="field-label">Model</span>
+                  <input id="tts-model" class="input" type="text" placeholder="tts-1">
+                </label>
+                <label class="field">
+                  <span class="field-label">Voice</span>
+                  <input id="tts-voice" class="input" type="text" placeholder="alloy or voice id">
+                </label>
+                <label class="field">
+                  <span class="field-label">API key</span>
+                  <input id="tts-key" class="input" type="password" placeholder="stored in OS keychain">
+                </label>
+              </div>
+              <p id="tts-note" class="meta"></p>
+              <div class="row">
+                <button id="tts-test" class="secondary" type="button">Test speech</button>
+                <button id="tts-save" class="primary" type="button">Save TTS</button>
+                <button id="tts-reset" class="secondary" type="button">Clear TTS</button>
+              </div>
+              <pre id="tts-output" class="output" aria-live="polite"></pre>
+            </section>
+
+            <details class="sheet diagnostics">
+              <summary>Diagnostics</summary>
+              <div class="row">
+                <button id="run-diagnostics" class="secondary" type="button">Run checks</button>
+                <span id="diagnostics-meta" class="meta"></span>
+              </div>
+              <pre id="diagnostics-output" class="output" aria-live="polite"></pre>
+              <p class="meta">The microphone check requests access, then stops the track immediately. Nothing is recorded or sent.</p>
+            </details>
+          </div>
+        </section>
       </div>
 
-      <div id="author-tab" class="tab-panel" hidden>
-        <div class="panel-head">
-          <h2>Author scenario</h2>
-          <span id="author-meta" class="meta"></span>
-        </div>
-        <div class="row">
-          <label class="file-input">Load YAML<input id="author-file" type="file" accept=".yaml,.yml"></label>
-          <button id="author-example" class="secondary" type="button">Load example</button>
-          <button id="author-validate" class="secondary" type="button">Validate</button>
-          <button id="author-render" class="secondary" type="button">Render &amp; download</button>
-          <button id="author-use" class="primary" type="button">Use in runner</button>
-        </div>
-        <div id="author-form" class="author-form"></div>
-        <pre id="author-output" class="output" aria-live="polite"></pre>
-      </div>
+      <section id="session-panel" class="session-panel" aria-label="Live training session" hidden>
+        <header class="session-bar">
+          <button id="back-to-brief" class="ghost" type="button">← Prepare</button>
+          <div class="session-heading">
+            <p id="session-stage-label" class="eyebrow">Run / Live call</p>
+            <h2 id="session-title">Session</h2>
+          </div>
+          <div class="session-bar-right">
+            <span id="session-meta" class="meta" role="status" aria-live="polite">In progress</span>
+            <span class="practice-tag">Practice</span>
+          </div>
+        </header>
 
-      <div id="settings-tab" class="tab-panel" hidden>
-        <div class="panel-head">
-          <h2>AI providers</h2>
-          <span id="provider-status" class="meta"></span>
-        </div>
-        <div class="grid">
-          <label class="field">
-            <span class="field-label">Provider</span>
-            <select id="provider-select" class="input"></select>
-          </label>
-          <label class="field">
-            <span class="field-label">Base URL</span>
-            <input id="provider-url" class="input" type="text" placeholder="https://...">
-          </label>
-          <label class="field">
-            <span class="field-label">Model</span>
-            <input id="provider-model" class="input" type="text" placeholder="model name">
-          </label>
-          <label class="field">
-            <span class="field-label">API key</span>
-            <input id="provider-key" class="input" type="password" placeholder="stored in OS keychain; blank keeps existing">
-          </label>
-        </div>
-        <p id="provider-note" class="meta"></p>
-        <div class="row">
-          <button id="provider-test" class="secondary" type="button">Test connection</button>
-          <button id="provider-save" class="primary" type="button">Save</button>
-          <button id="provider-reset" class="secondary" type="button">Use deterministic caller</button>
-        </div>
-        <pre id="provider-output" class="output" aria-live="polite"></pre>
-        <p class="meta">API keys are stored in the OS keychain. Anthropic consumer subscription OAuth is not available to third-party apps; use an API key. OpenAI Sign in with ChatGPT plan usage is partner-gated.</p>
+        <div class="session-layout">
+          <aside class="session-rail">
+            <section class="sheet session-brief">
+              <p class="sheet-label">This run</p>
+              <div id="session-scenario" class="session-scenario">
+                <strong>Scenario</strong>
+                <p class="meta">The scenario summary appears when the session starts.</p>
+              </div>
+            </section>
 
-        <h3 class="settings-heading">Speech-to-text</h3>
-        <div class="grid">
-          <label class="field">
-            <span class="field-label">Provider</span>
-            <select id="stt-provider" class="input"></select>
-          </label>
-          <label class="field">
-            <span class="field-label">Base URL</span>
-            <input id="stt-url" class="input" type="text" placeholder="https://...">
-          </label>
-          <label class="field">
-            <span class="field-label">Model</span>
-            <input id="stt-model" class="input" type="text" placeholder="whisper-1">
-          </label>
-          <label class="field">
-            <span class="field-label">Language</span>
-            <input id="stt-language" class="input" type="text" placeholder="en">
-          </label>
-          <label class="field">
-            <span class="field-label">API key</span>
-            <input id="stt-key" class="input" type="password" placeholder="stored in OS keychain">
-          </label>
-        </div>
-        <p id="stt-note" class="meta"></p>
-        <div class="row">
-          <button id="stt-test" class="secondary" type="button">Test transcription</button>
-          <button id="stt-save" class="primary" type="button">Save STT</button>
-          <button id="stt-reset" class="secondary" type="button">Clear STT</button>
-          <span id="stt-status" class="meta"></span>
-        </div>
-        <pre id="stt-output" class="output" aria-live="polite"></pre>
+            <section class="sheet events-sheet">
+              <div class="sheet-head">
+                <div>
+                  <p class="sheet-label">Events</p>
+                  <h3>Recorded anchors</h3>
+                </div>
+                <span class="meta">Tap to record</span>
+              </div>
+              <div id="event-bar" class="event-bar"></div>
+            </section>
 
-        <h3 class="settings-heading">Text-to-speech</h3>
-        <div class="grid">
-          <label class="field">
-            <span class="field-label">Provider</span>
-            <select id="tts-provider" class="input"></select>
-          </label>
-          <label class="field">
-            <span class="field-label">Base URL</span>
-            <input id="tts-url" class="input" type="text" placeholder="https://...">
-          </label>
-          <label class="field">
-            <span class="field-label">Model</span>
-            <input id="tts-model" class="input" type="text" placeholder="tts-1">
-          </label>
-          <label class="field">
-            <span class="field-label">Voice</span>
-            <input id="tts-voice" class="input" type="text" placeholder="alloy or voice id">
-          </label>
-          <label class="field">
-            <span class="field-label">API key</span>
-            <input id="tts-key" class="input" type="password" placeholder="stored in OS keychain">
-          </label>
-        </div>
-        <p id="tts-note" class="meta"></p>
-        <div class="row">
-          <button id="tts-test" class="secondary" type="button">Test speech</button>
-          <button id="tts-save" class="primary" type="button">Save TTS</button>
-          <button id="tts-reset" class="secondary" type="button">Clear TTS</button>
-          <span id="tts-status" class="meta"></span>
-        </div>
-        <pre id="tts-output" class="output" aria-live="polite"></pre>
-      </div>
+            <section class="sheet session-actions">
+              <button id="finish" class="primary wide" type="button">End call &amp; score</button>
+              <button id="download" class="secondary wide" type="button" disabled>Download report</button>
+            </section>
+          </aside>
 
-      <details class="diagnostics">
-        <summary>Diagnostics</summary>
-        <div class="row">
-          <button id="run-diagnostics" class="secondary" type="button">Run checks</button>
-          <span id="diagnostics-meta" class="meta"></span>
-        </div>
-        <pre id="diagnostics-output" class="output" aria-live="polite"></pre>
-        <p class="meta">The microphone check requests access, then stops the track immediately. Nothing is recorded or sent.</p>
-      </details>
-    </section>
+          <section class="call-stage">
+            <ol id="transcript" class="transcript" role="log" aria-live="polite" aria-relevant="additions" aria-label="Call transcript"></ol>
 
-    <section class="panel session-panel" id="session-panel" hidden>
-      <div class="panel-head">
-        <h2 id="session-title">Session</h2>
-        <span id="session-meta" class="meta"></span>
-      </div>
-      <div id="transcript" class="transcript"></div>
-      <div id="event-bar" class="event-bar"></div>
-      <div class="turn-row">
-        <input id="turn-input" type="text" placeholder="Trainee response..." autocomplete="off">
-        <button id="send" class="primary" type="button">Send</button>
-      </div>
-      <div class="voice-row">
-        <button id="record" class="secondary" type="button" disabled>Record turn</button>
-        <span id="voice-meta" class="meta">Voice not checked</span>
-        <audio id="caller-audio" class="caller-audio" hidden></audio>
-      </div>
-      <div class="row">
-        <button id="finish" class="primary" type="button">Finish &amp; score</button>
-        <button id="download" class="secondary" type="button" disabled>Download report</button>
-      </div>
-      <div id="scorecard" class="scorecard" hidden aria-live="polite"></div>
-    </section>
-  </main>
+            <div class="composer">
+              <div class="turn-row">
+                <input id="turn-input" type="text" placeholder="Trainee response..." autocomplete="off" aria-label="Trainee response">
+                <button id="send" class="primary" type="button">Send</button>
+              </div>
+              <div class="voice-row">
+                <button id="record" class="secondary" type="button" disabled>Record turn</button>
+                <span id="voice-meta" class="meta">Voice not checked</span>
+                <audio id="caller-audio" class="caller-audio" hidden></audio>
+              </div>
+            </div>
+
+            <div id="scorecard" class="scorecard" hidden aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <script src="/app.js"></script>
   <script src="/author.js"></script>
