@@ -151,6 +151,8 @@ fn app(state: AppState) -> Router {
     Router::new()
         .route("/", get(handlers::static_files::index))
         .route("/app.js", get(handlers::static_files::app_js))
+        .route("/library.js", get(handlers::static_files::library_js))
+        .route("/library.css", get(handlers::static_files::library_css))
         .route("/author.js", get(handlers::static_files::author_js))
         .route("/settings.js", get(handlers::static_files::settings_js))
         .route("/styles.css", get(handlers::static_files::styles))
