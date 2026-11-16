@@ -5,7 +5,7 @@
 A free, MIT-licensed alternative to closed 911 dispatcher training simulators.
 The product is the **open scenario and rubric format**; this repo is the
 reference implementation: a validator, a text-mode runner, and a checklist
-scorer. Voice and model adapters come later behind the same format.
+scorer. Voice and model adapters sit behind the same format and are configured locally.
 
 ## Why
 

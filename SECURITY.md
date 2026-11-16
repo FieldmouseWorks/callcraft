@@ -18,9 +18,9 @@ and ship in the next release.
 - The reference implementation: format handling, loopback server, CLI, and
   Tauri desktop shell.
 - The scenario format and JSON Schema.
-- Out of scope: third-party speech/model adapters (not implemented yet), hosted
-  deployments operated by others, and any live-call or CJI integration (none
-  exists by design).
+- Out of scope: the third-party provider services themselves (their outages,
+  data handling, and terms), hosted deployments operated by others, and any
+  live-call or CJI integration (none exists by design).
 
 ## Dependency policy
 
