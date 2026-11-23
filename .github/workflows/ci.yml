@@ -12,6 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Format, clippy and the tests run in the flake gate (flake.yml). These
+  # fetch the advisory database, which the Nix sandbox can't.
   linux:
     runs-on: ubuntu-latest
     steps:
@@ -21,13 +23,6 @@ jobs:
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
         with:
           toolchain: stable
-          components: rustfmt, clippy
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --workspace --exclude callcraft-app --all-targets -- -D warnings
-      - name: Test
-        run: cargo test --workspace --exclude callcraft-app
       - name: Install supply-chain tools
         run: cargo install cargo-audit cargo-deny --locked
       - name: Audit advisories
