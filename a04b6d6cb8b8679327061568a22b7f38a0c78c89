@@ -1,0 +1,162 @@
+{
+  "conary": "note v1",
+  "change": "0zzpkbghwfy4s8j8a7cbfpf24c",
+  "repo": {
+    "owner": "FieldmouseWorks",
+    "name": "callcraft"
+  },
+  "pr": 37,
+  "url": "https://github.com/FieldmouseWorks/callcraft/pull/37",
+  "summary": "ci: run the gate on Conary's train candidates",
+  "task": "fieldmouseworks/callcraft#26",
+  "author": {
+    "kind": "person",
+    "login": "TusanHomichi",
+    "session": null
+  },
+  "class": "R0",
+  "landing": {
+    "revision": "02f61d89b5e61ad754bded6f652175f809c4ada9c8a812dbd4108da904701fcd",
+    "before": "97841eccff535714bc64c176ca01923b22fd08f0",
+    "after": "a04b6d6cb8b8679327061568a22b7f38a0c78c89",
+    "by": {
+      "kind": "status",
+      "login": "fieldmouseworks-steward[bot]"
+    },
+    "at": 1795413457839
+  },
+  "evidence": [
+    {
+      "kind": "ci",
+      "check": "CodeQL",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/runs/137510398723"
+    },
+    {
+      "kind": "ci",
+      "check": "codeql / analyze (actions)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603012/job/137510253498"
+    },
+    {
+      "kind": "ci",
+      "check": "codeql / analyze (javascript-typescript)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603012/job/137510253497"
+    },
+    {
+      "kind": "ci",
+      "check": "linux",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602896/job/137510187019"
+    },
+    {
+      "kind": "ci",
+      "check": "check / commits",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603082/job/137510104300"
+    },
+    {
+      "kind": "ci",
+      "check": "check / lane into main",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603082/job/137510104269"
+    },
+    {
+      "kind": "ci",
+      "check": "check / negative",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603082/job/137510103997"
+    },
+    {
+      "kind": "ci",
+      "check": "codeql / pick",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603012/job/137510103713"
+    },
+    {
+      "kind": "ci",
+      "check": "house",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804/job/137510102764"
+    },
+    {
+      "kind": "ci",
+      "check": "linux",
+      "result": "error",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119588326/job/137510055980"
+    },
+    {
+      "kind": "ci",
+      "check": "windows",
+      "result": "error",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119588326/job/137510055635"
+    },
+    {
+      "kind": "ci",
+      "check": "house/title (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/rust-first (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/timers (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/file-size (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/guide-size (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/model-names (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/branch (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "ci",
+      "check": "house/mention (#37)",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602804"
+    },
+    {
+      "kind": "review",
+      "check": "codex",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/pull/37#issuecomment-7092674731 at 2026-11-23T05:44:54Z"
+    },
+    {
+      "kind": "ci",
+      "check": "check / check",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119603082/job/137510134635"
+    },
+    {
+      "kind": "ci",
+      "check": "windows",
+      "result": "pass",
+      "source": "https://github.com/FieldmouseWorks/callcraft/actions/runs/45119602896/job/137510187341"
+    }
+  ]
+}
