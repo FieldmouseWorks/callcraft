@@ -22,9 +22,8 @@ Latest stable, always. This is not a preference; it is the rule for this project
 
 Every PR runs:
 
-- `cargo fmt --all -- --check`
-- `cargo clippy --workspace --exclude callcraft-app --all-targets -- -D warnings`
-- `cargo test --workspace --exclude callcraft-app`
+- `nix flake check`: rustfmt, clippy on every target of the whole workspace
+  with warnings as errors, the workspace's tests, and a secrets scan
 - `cargo audit` (RustSec advisories)
 - `cargo deny check` (advisories, licenses, sources, wildcard bans)
 - Windows build of the Tauri shell (`cargo build -p callcraft-app`)

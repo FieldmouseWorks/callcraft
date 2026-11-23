@@ -3,3 +3,9 @@
 .DS_Store
 /reports
 *.report.json
+/result*
+CLAUDE.local.md
+.idea/
+.vscode/
+*.swp
+*~
