@@ -5,7 +5,7 @@
   # in .github/workflows, in one PR (burrow's
   # modules/updates/renovate-policy.nix says when); `nix flake update`
   # leaves it where it is.
-  inputs.burrow.url = "git+https://github.com/FieldmouseWorks/burrow?ref=main&rev=fcce5697ca5c37efb3b813cf7c5755a6dd5dd81e";
+  inputs.burrow.url = "git+https://github.com/FieldmouseWorks/burrow?ref=main&rev=5fe4bb5868149b51bdb3cf2a555eb297ab41951a";
 
   # `nix develop` for the toolchains, `nix flake check` for the gate (see
   # burrow's lib/project.nix). The Tauri shell (crates/callcraft-app) links
